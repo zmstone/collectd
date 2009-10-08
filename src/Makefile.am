@@ -314,6 +314,16 @@ collectd_LDADD += "-dlopen" entropy.la
 collectd_DEPENDENCIES += entropy.la
 endif
 
+if BUILD_PLUGIN_ERLANG
+pkglib_LTLIBRARIES += erlang.la
+erlang_la_SOURCES = erlang.c
+erlang_la_CPPFLAGS = $(AM_CPPFLAGS) $(BUILD_WITH_ERLANG_CPPFLAGS)
+erlang_la_LDFLAGS = -module -avoid-version $(BUILD_WITH_ERLANG_LDFLAGS)
+erlang_la_LIBADD = $(BUILD_WITH_ERLANG_LIBS)
+collectd_LDADD += "-dlopen" erlang.la
+collectd_DEPENDENCIES += erlang.la
+endif
+
 if BUILD_PLUGIN_EXEC
 pkglib_LTLIBRARIES += exec.la
 exec_la_SOURCES = exec.c \
