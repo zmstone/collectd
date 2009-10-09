@@ -1,0 +1,3 @@
+-record(value_list, {host="localhost", plugin, plugin_instance, type, type_instance, ctime, interval=10, values}).
+-record(data_source, {ds_name, type, min, max}).
+-record(data_set, {type, sources}).
