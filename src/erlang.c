@@ -110,13 +110,17 @@ static int eterm_to_int (const ETERM *term, int *ret_int) /* {{{ */
 			*ret_int = (int) (ERL_FLOAT_VALUE (term) + .5);
 			break;
 
+#ifdef ERL_LONGLONG
 		case ERL_LONGLONG:
 			*ret_int = (int) ERL_LL_VALUE (term);
 			break;
+#endif /* ERL_LONGLONG */
 
+#ifdef ERL_U_LONGLONG
 		case ERL_U_LONGLONG:
 			*ret_int = (int) ERL_LL_UVALUE (term);
 			break;
+#endif /* ERL_U_LONGLONG */
 
 		default:
 			ERROR ("erlang plugin: Don't know how to cast "
@@ -169,13 +173,17 @@ static int eterm_to_time_t (const ETERM *term, time_t *ret_time) /* {{{ */
 			*ret_time = (time_t) (ERL_FLOAT_VALUE (term) + .5);
 			break;
 
+#ifdef ERL_LONGLONG
 		case ERL_LONGLONG:
 			*ret_time = (time_t) ERL_LL_VALUE (term);
 			break;
+#endif /* ERL_LONGLONG */
 
+#ifdef ERL_U_LONGLONG
 		case ERL_U_LONGLONG:
 			*ret_time = (time_t) ERL_LL_UVALUE (term);
 			break;
+#endif /* ERL_U_LONGLONG */
 
 		default:
 			ERROR ("erlang plugin: Don't know how to cast "
@@ -264,6 +272,7 @@ static int eterm_to_value (const ETERM *term, int ds_type, /* {{{ */
 			break;
 		}
 
+#ifdef ERL_LONGLONG
 		case ERL_LONGLONG:
 		{
 			long long v = ERL_LL_VALUE (term);
@@ -276,7 +285,9 @@ static int eterm_to_value (const ETERM *term, int ds_type, /* {{{ */
 			}
 			break;
 		}
+#endif /* ERL_LONGLONG */
 
+#ifdef ERL_U_LONGLONG
 		case ERL_U_LONGLONG:
 		{
 			unsigned long long v = ERL_LL_UVALUE (term);
@@ -289,6 +300,7 @@ static int eterm_to_value (const ETERM *term, int ds_type, /* {{{ */
 			}
 			break;
 		}
+#endif /* ERL_U_LONGLONG */
 
 		default:
 			ERROR ("erlang plugin: Don't know how to cast "
