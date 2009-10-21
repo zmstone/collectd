@@ -20,6 +20,7 @@
  **/
 
 #include "collectd.h"
+#include "common.h"
 #include "plugin.h"
 
 #include <sys/types.h>
@@ -48,6 +49,16 @@ typedef struct ce_connection_info_s ce_connection_info_t;
 static pthread_t listen_thread_id;
 static _Bool     listen_thread_running = false;
 
+static const char *config_keys[] =
+{
+	"BindTo",
+	"BindPort",
+	"Cookie",
+	"NodeName"
+};
+static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
+
+static char conf_node[NI_MAXHOST] = "";
 static char conf_service[NI_MAXSERV] = "29157";
 static char conf_cookie[256] = "ceisaequ";
 static char conf_hostname[256] = "alyja";
@@ -781,8 +792,56 @@ static int ce_init (void) /* {{{ */
 	return (0);
 } /* }}} int ce_init */
 
+static int ce_config (const char *key, const char *value) /* {{{ */
+{
+	if (strcasecmp ("BindTo", key) == 0)
+	{
+		sstrncpy (conf_node, value, sizeof (conf_node));
+	}
+	else if (strcasecmp ("BindPort", key) == 0)
+	{
+		sstrncpy (conf_service, value, sizeof (conf_service));
+	}
+	else if (strcasecmp ("Cookie", key) == 0)
+	{
+		sstrncpy (conf_cookie, value, sizeof (conf_cookie));
+	}
+	else if (strcasecmp ("NodeName", key) == 0)
+	{
+		const char *host;
+
+		host = strchr (value, '@');
+		if (host == NULL)
+		{
+			sstrncpy (conf_nodename, value, sizeof (conf_nodename));
+			sstrncpy (conf_hostname, hostname_g, sizeof (conf_hostname));
+			ssnprintf (conf_fullname, sizeof (conf_fullname), "%s@%s",
+					conf_nodename, conf_hostname);
+		}
+		else /* if (host != NULL) */
+		{
+			char *tmp;
+
+			sstrncpy (conf_nodename, value, sizeof (conf_nodename));
+			sstrncpy (conf_hostname, host + 1, sizeof (conf_hostname));
+			sstrncpy (conf_fullname, value, sizeof (conf_fullname));
+
+			tmp = strchr (conf_nodename, '@');
+			if (tmp != NULL)
+				*tmp = 0;
+		}
+	}
+	else
+	{
+		return (-1);
+	}
+
+	return (0);
+} /* }}} int ce_config */
+
 void module_register (void)
 {
+	plugin_register_config ("erlang", ce_config, config_keys, config_keys_num);
 	plugin_register_init ("erlang", ce_init);
 }
 
