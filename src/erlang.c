@@ -50,6 +50,9 @@ static _Bool     listen_thread_running = false;
 
 static char conf_service[NI_MAXSERV] = "29157";
 static char conf_cookie[256] = "ceisaequ";
+static char conf_hostname[256] = "alyja";
+static char conf_nodename[256] = "collectd";
+static char conf_fullname[256] = "collectd@alyja.office.noris.de";
 
 /*
  * Private functions
@@ -639,9 +642,9 @@ static int create_listen_socket (void) /* {{{ */
 		/* Dunno if calling this multiple times is legal. Since it wants to have
 		 * the sin_addr for some reason this is the best place to call this,
 		 * though. -octo */
-		status = erl_connect_xinit (/* host name = */ "leeloo",
-				/* plain node name = */ "collectd",
-				/* full node name  = */ "collectd@leeloo.lan.home.verplant.org",
+		status = erl_connect_xinit (/* host name = */ conf_hostname,
+				/* plain node name = */ conf_nodename,
+				/* full node name  = */ conf_fullname,
 				/* our address     = */ sin_addr,
 				/* secret cookie   = */ conf_cookie,
 				/* instance number = */ 0);
