@@ -504,6 +504,55 @@ static int handle_dispatch_values (ce_connection_info_t *cinfo, /* {{{ */
 	return (0);
 } /* }}} int handle_dispatch_values */
 
+/* Returns non-zero only if the request could not be handled gracefully. */
+static int handle_register_read (ce_connection_info_t *cinfo, /* {{{ */
+		const ErlMessage *req)
+{
+	ETERM *eterm_cb;
+	ETERM *rpc_args;
+	ETERM *rpc_reply;
+
+	if ((cinfo == NULL) || (req == NULL))
+		return (EINVAL);
+
+	eterm_cb = erl_element (2, req->msg);
+
+	if (ERL_TYPE (eterm_cb) != ERL_FUNCTION)
+	{
+		erl_free_term (eterm_cb);
+		send_error (cinfo->fd, req->from,
+				"Argument to `register_read' must be a callback function.");
+		return (0);
+	}
+
+	send_atom (cinfo->fd, req->from, "success");
+
+	/* FIXME: The following demonstrates how to call this function. This should
+	 * be moved somewhere else, of course. */
+
+	/* --- 8< --- */
+	rpc_args = erl_format ("[~w,[]]", eterm_cb);
+	if (rpc_args == NULL)
+	{
+		erl_free_term (eterm_cb);
+		send_error (cinfo->fd, req->from,
+				"erl_format failed. Sorry.");
+		return (0);
+	}
+
+	rpc_reply = erl_rpc (cinfo->fd,
+			/* module = */ "erlang", /* function = */ "apply",
+			/* arguments = */ rpc_args);
+
+	erl_free_compound (rpc_args);
+	/* Right now, the return value is not used. */
+	erl_free_compound (rpc_reply);
+	/* --- >8 --- */
+
+	erl_free_term (eterm_cb); /* XXX: This must stay here. */
+	return (0);
+} /* }}} int handle_dispatch_values */
+
 static void *handle_client_thread (void *arg) /* {{{ */
 {
 	ce_connection_info_t *cinfo;
@@ -562,6 +611,8 @@ static void *handle_client_thread (void *arg) /* {{{ */
 			reply = NULL;
 			if (strcmp ("dispatch_values", ERL_ATOM_PTR (func)) == 0)
 				status = handle_dispatch_values (cinfo, &emsg);
+			else if (strcmp ("register_read", ERL_ATOM_PTR (func)) == 0)
+				status = handle_register_read (cinfo, &emsg);
 			else
 			{
 				ERROR ("erlang plugin: Received request for invalid function `%s'.",
