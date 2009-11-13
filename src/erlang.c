@@ -720,6 +720,13 @@ static int create_listen_socket (void) /* {{{ */
 		}
 	}
 
+	if (sock_descr >= 0)
+	{
+		INFO ("erlang plugin: Created Erlang socket: Nodename %s, Port %i, "
+				"Cookie %s.",
+				conf_fullname, numeric_serv, conf_cookie);
+	}
+
 	return (sock_descr);
 } /* }}} int create_listen_socket */
 
