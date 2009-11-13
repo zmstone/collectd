@@ -712,7 +712,8 @@ static int create_listen_socket (void) /* {{{ */
 		status = erl_publish (numeric_serv);
 		if (status < 0)
 		{
-			ERROR ("erlang plugin: erl_publish (%i) failed with status %i.", numeric_serv, status);
+			ERROR ("erlang plugin: erl_publish (%i) failed with status %i. "
+					"Is epmd running?", numeric_serv, status);
 			close (sock_descr);
 			sock_descr = -1;
 			return (-1);
