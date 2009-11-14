@@ -69,6 +69,7 @@ FQDNLookup   true
 #@BUILD_PLUGIN_DNS_TRUE@LoadPlugin dns
 #@BUILD_PLUGIN_EMAIL_TRUE@LoadPlugin email
 #@BUILD_PLUGIN_ENTROPY_TRUE@LoadPlugin entropy
+#@BUILD_PLUGIN_ERLANG_TRUE@LoadPlugin erlang
 #@BUILD_PLUGIN_EXEC_TRUE@LoadPlugin exec
 #@BUILD_PLUGIN_FILECOUNT_TRUE@LoadPlugin filecount
 #@BUILD_PLUGIN_FSCACHE_TRUE@LoadPlugin fscache
@@ -272,6 +273,13 @@ FQDNLookup   true
 #	SocketGroup "collectd"
 #	SocketPerms "0770"
 #	MaxConns 5
+#</Plugin>
+
+#<Plugin erlang>
+#	BindTo "local.host.name"
+#	BindPort "12345"
+#	Cookie "secret"
+#	NodeName "collectd@local.host.name"
 #</Plugin>
 
 #<Plugin exec>
