@@ -551,22 +551,22 @@ static int handle_dispatch_values (ce_connection_info_t *cinfo, /* {{{ */
 	if (status != 0)
 	{
 		free (vl.values);
-		send_error (cinfo->fd, req->from, "Cannot parse argument as value list.");
-		return (0);
+		status = send_error (cinfo->fd, req->from, "Cannot parse argument as value list.");
+		return (status);
 	}
 
 	status = plugin_dispatch_values (&vl);
 	if (status != 0)
 	{
 		free (vl.values);
-		send_error (cinfo->fd, req->from, "plugin_dispatch_values failed.");
-		return (0);
+		status = send_error (cinfo->fd, req->from, "plugin_dispatch_values failed.");
+		return (status);
 	}
 
 	free (vl.values);
-	send_atom (cinfo->fd, req->from, "success");
+	status = send_atom (cinfo->fd, req->from, "success");
 
-	return (0);
+	return (status);
 } /* }}} int handle_dispatch_values */
 
 /* Returns non-zero only if the request could not be handled gracefully. */
