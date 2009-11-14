@@ -127,7 +127,7 @@ static int send_error (int fd, ETERM *to, const char *message) /* {{{ */
 	else
 		status = 0;
 
-	erl_free_term (reply);
+	erl_free_compound (reply);
 
 	return (status);
 } /* }}} int send_error */
