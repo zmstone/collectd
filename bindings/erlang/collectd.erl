@@ -3,7 +3,7 @@
 
 -include("collectd.hrl").
 
-dispatch_values (VL) when is_record (VL, value_list) ->
+dispatch_values (#value_list{} = VL) ->
 	call_cnode (dispatch_values, VL).
 
 register_read (Callback) ->
