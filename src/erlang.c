@@ -911,9 +911,10 @@ void *listen_thread (void *arg) /* {{{ */
 		fd = erl_accept (listen, &conn);
 		if (fd < 0)
 		{
-			ERROR ("erlang plugin: erl_accept failed with status %i.", fd);
-			close (listen);
-			exit (EXIT_FAILURE);
+			char errbuf[1024];
+			ERROR ("erlang plugin: erl_accept failed: %s",
+					sstrerror (erl_errno, errbuf, sizeof (errbuf)));
+			continue;
 		}
 		DEBUG ("erlang plugin: Got connection from %s on fd %i.",
 				conn.nodename, fd);
