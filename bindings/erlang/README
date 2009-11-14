@@ -1,0 +1,62 @@
+Erlang bindings for collectd
+============================
+Welcome to the Erlang bindings for collectd. This is a quick introduction to
+get you started.
+
+
+collectd's Erlang plugin
+------------------------
+In order to write collectd plugins in Erlang, you need to load the “Erlang”
+plugin in collectd. The Erlang plugin will create a “C-node” which basically
+behaves like a distributed Erlang node. This means you can send messages to
+that note which it will process and reply with an appropriate message.
+
+The first step is to start the “Erlang Port Mapper Daemon”, epmd. Without that
+that daemon running, collectd will not be able to register itself as a node.
+
+The collectd configuration looks somewhat like this:
+-- 8< --
+ LoadPlugin "erlang"
+ <Plugin "erlang">
+   NodeName "collectd@example.collectd.org"
+   Cookie "worlddomination"
+ </Plugin>
+-- >8 --
+
+
+Starting a distributed Erlang node
+----------------------------------
+The next step is to start a distributed Erlang node. This node has to use the
+same “cookie” as the daemon in order to be able to communicate with it. The
+node name should be something different though:
+
+  $ erl -name shell@example.collectd.org -setcookie worlddomination
+
+
+Erlang's collectd module
+------------------------
+The actual message passing is abstracted using the “collectd” module. It
+currently provides the following functions:
+
+  * register_read/1
+    The argument must be a function reference (“fun”). This function is called
+    once every interval.
+
+  * dispatch_values/1
+    The function takes a record of the type “value_list” (see file
+    “collectd.hrl”) and sends it to the daemon.
+
+Both functions return either the atom “success” upon success or
+{error, Message} if an error occurred.
+
+
+Status
+------
+Currently the bindings are still very much work in progress. Configuration of
+the Erlang module is not yet possible and only read callbacks can be registered
+currently.
+
+
+Author
+------
+Erlang bindings for collectd have been written by Florian octo Forster.
