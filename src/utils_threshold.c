@@ -30,6 +30,7 @@
 #include "utils_avltree.h"
 #include "utils_cache.h"
 #include "utils_threshold.h"
+#include "utils_subst.h"
 
 #include <assert.h>
 #include <pthread.h>
@@ -248,6 +249,62 @@ static int ut_config_type_hysteresis (threshold_t *th, oconfig_item_t *ci)
   return (0);
 } /* int ut_config_type_hysteresis */
 
+static int ut_config_type_message (threshold_t *th, oconfig_item_t *ci)
+{
+
+  if ((ci->values_num != 1)
+      || (ci->values[0].type != OCONFIG_TYPE_STRING))
+  {
+    WARNING ("threshold values: The `%s' option needs exactly one "
+      "string argument.", ci->key);
+    return (-1);
+  }
+
+  if (ci->values[0].value.string[0] == 0)
+  {
+    WARNING ("threshold values: The `%s' option does not accept empty strings.",
+        ci->key);
+    return (-1);
+  }
+
+  th->message = strdup (ci->values[0].value.string);
+  if (th->message == NULL)
+  {
+    ERROR ("ut_config_type_message: sstrdup failed.");
+    return (-1);
+  }
+
+  return (0);
+} /* int ut_config_type_message */
+
+static int ut_config_type_missingmessage (threshold_t *th, oconfig_item_t *ci)
+{
+
+  if ((ci->values_num != 1)
+      || (ci->values[0].type != OCONFIG_TYPE_STRING))
+  {
+    WARNING ("threshold values: The `%s' option needs exactly one "
+      "string argument.", ci->key);
+    return (-1);
+  }
+
+  if (ci->values[0].value.string[0] == 0)
+  {
+    WARNING ("threshold values: The `%s' option does not accept empty strings.",
+        ci->key);
+    return (-1);
+  }
+
+  th->missing_message = strdup (ci->values[0].value.string);
+  if (th->missing_message == NULL)
+  {
+    ERROR ("ut_config_type_missingmessage: sstrdup failed.");
+    return (-1);
+  }
+
+  return (0);
+} /* int ut_config_type_missingmessage */
+
 static int ut_config_type (const threshold_t *th_orig, oconfig_item_t *ci)
 {
   int i;
@@ -277,6 +334,7 @@ static int ut_config_type (const threshold_t *th_orig, oconfig_item_t *ci)
   th.failure_max = NAN;
   th.hits = 0;
   th.hysteresis = 0;
+  th.message = NULL;
   th.flags = UT_FLAG_INTERESTING; /* interesting by default */
 
   for (i = 0; i < ci->children_num; i++)
@@ -306,6 +364,10 @@ static int ut_config_type (const threshold_t *th_orig, oconfig_item_t *ci)
       status = ut_config_type_hits (&th, option);
     else if (strcasecmp ("Hysteresis", option->key) == 0)
       status = ut_config_type_hysteresis (&th, option);
+    else if (strcasecmp ("Message", option->key) == 0)
+      status = ut_config_type_message (&th, option);
+    else if (strcasecmp ("MissingMessage", option->key) == 0)
+      status = ut_config_type_missingmessage (&th, option);
     else
     {
       WARNING ("threshold values: Option `%s' not allowed inside a `Type' "
@@ -541,6 +603,120 @@ static threshold_t *threshold_search (const value_list_t *vl)
   return (NULL);
 } /* threshold_t *threshold_search */
 
+/* char *ut_build_message
+ *
+ * Return a custom formated message for dataset, values and previously created
+ * notification (which must include time and other fields), if th is present,
+ * templates for threshold will be interpreted, if th is NULL these will be
+ * skipped.
+ */
+int ut_build_message(char *out, size_t bufsize, const char *fmt,
+    const data_set_t *ds, int ds_index, const value_list_t *vl, const gauge_t *values,
+    const notification_t *n, const threshold_t *th)
+{
+
+  /* TODO: We could provide here a way to use meta information on thresholds
+   * directly in the future. */
+  char msg[NOTIF_MAX_MSG_LEN];
+  char temp[NOTIF_MAX_MSG_LEN];
+  gauge_t *rates;
+  int rates_failed;
+
+  int i;
+
+  sstrncpy (msg, fmt, sizeof (msg));
+
+#define REPLACE_FIELD(t,v) \
+  if (subst_string (temp, sizeof (temp), msg, t, v) != NULL) \
+  sstrncpy (msg, temp, sizeof (msg));
+
+  char ftoa_temp[NOTIF_MAX_MSG_LEN];
+#define FTOA(string,f) \
+  memset(string,0x00,sizeof(string)); \
+  snprintf(string, sizeof(string), "%f", f);
+
+  char itoa_temp[NOTIF_MAX_MSG_LEN];
+#define ITOA(string,i) \
+  memset(string,0x00,sizeof(string)); \
+  snprintf(string, sizeof(string), "%i", i);
+
+  REPLACE_FIELD ("%{host}", n->host);
+  REPLACE_FIELD ("%{plugin}", n->plugin);
+  REPLACE_FIELD ("%{plugin_instance}", n->plugin_instance);
+  REPLACE_FIELD ("%{type}", n->type);
+  REPLACE_FIELD ("%{type_instance}", n->type_instance);
+  REPLACE_FIELD ("%{data_source}", ds->ds[ds_index].name);
+
+  /* This is the offending value, its equivalent to %{ds:value}, if
+   * value is the data_source name. */
+  FTOA(ftoa_temp,values[ds_index])
+    REPLACE_FIELD ("%{value}", ftoa_temp);
+
+  /* Now replace all %{ds:<template>} like target_notification does */
+  rates_failed = 0;
+  rates = NULL;
+  for (i = 0; i < ds->ds_num; i++)
+  {
+    char template[DATA_MAX_NAME_LEN];
+    char value_str[DATA_MAX_NAME_LEN];
+
+    ssnprintf (template, sizeof (template), "%%{ds:%s}", ds->ds[i].name);
+
+    if (ds->ds[i].type != DS_TYPE_GAUGE)
+    {
+      if ((rates == NULL) && (rates_failed == 0))
+      {
+        rates = uc_get_rate (ds, vl);
+        if (rates == NULL)
+          rates_failed = 1;
+      }
+    }
+
+    /* If this is a gauge value, use the current value. */
+    if (ds->ds[i].type == DS_TYPE_GAUGE)
+      ssnprintf (value_str, sizeof (value_str),
+          "%g", (double) vl->values[i].gauge);
+    /* If it's a counter, try to use the current rate. This may fail, if the
+     * value has been renamed. */
+    else if (rates != NULL)
+      ssnprintf (value_str, sizeof (value_str),
+          "%g", (double) rates[i]);
+    /* Since we don't know any better, use the string `unknown'. */
+    else
+      sstrncpy (value_str, "unknown", sizeof (value_str));
+
+    REPLACE_FIELD (template, value_str);
+  }
+  sfree (rates);
+
+  if (th != NULL) {
+    if ( !isnan(th->warning_min)) {
+      FTOA(ftoa_temp,th->warning_min)
+        REPLACE_FIELD ("%{warning_min}", ftoa_temp);
+    }
+    if ( !isnan(th->warning_max)) {
+      FTOA(ftoa_temp,th->warning_max)
+        REPLACE_FIELD ("%{warning_max}", ftoa_temp);
+    }
+    if ( !isnan(th->failure_min)) {
+      FTOA(ftoa_temp,th->failure_min)
+        REPLACE_FIELD ("%{failure_min}", ftoa_temp);
+    }
+    if ( !isnan(th->failure_max)) {
+      FTOA(ftoa_temp,th->failure_max)
+        REPLACE_FIELD ("%{failure_max}", ftoa_temp);
+    }
+
+    FTOA(ftoa_temp,th->hysteresis)
+      REPLACE_FIELD ("%{hysteresis}", ftoa_temp);
+
+    ITOA(itoa_temp,th->hits)
+      REPLACE_FIELD ("%{hits}", itoa_temp);
+  }
+
+  return ssnprintf (out, bufsize, "%s", msg);
+} /* int ut_build_message */
+
 /*
  * int ut_report_state
  *
@@ -608,31 +784,95 @@ static int ut_report_state (const data_set_t *ds,
 
   n.time = vl->time;
 
-  status = ssnprintf (buf, bufsize, "Host %s, plugin %s",
-      vl->host, vl->plugin);
-  buf += status;
-  bufsize -= status;
-
-  if (vl->plugin_instance[0] != '\0')
+  /* Format custom message if present */
+  if (th->message != NULL)
   {
-    status = ssnprintf (buf, bufsize, " (instance %s)",
-	vl->plugin_instance);
+    status = ut_build_message (buf, bufsize, th->message,
+        ds, ds_index, vl, values,
+        &n, th);
     buf += status;
     bufsize -= status;
   }
-
-  status = ssnprintf (buf, bufsize, " type %s", vl->type);
-  buf += status;
-  bufsize -= status;
-
-  if (vl->type_instance[0] != '\0')
+  else /* No custom message. Using default message for threshold */
   {
-    status = ssnprintf (buf, bufsize, " (instance %s)",
-	vl->type_instance);
+    status = ssnprintf (buf, bufsize, "Host %s, plugin %s",
+        vl->host, vl->plugin);
     buf += status;
     bufsize -= status;
+
+    if (vl->plugin_instance[0] != '\0')
+    {
+      status = ssnprintf (buf, bufsize, " (instance %s)",
+          vl->plugin_instance);
+      buf += status;
+      bufsize -= status;
+    }
+
+    status = ssnprintf (buf, bufsize, " type %s", vl->type);
+    buf += status;
+    bufsize -= status;
+
+    if (vl->type_instance[0] != '\0')
+    {
+      status = ssnprintf (buf, bufsize, " (instance %s)",
+          vl->type_instance);
+      buf += status;
+      bufsize -= status;
+    }
+
+    /* Build okay notification message */
+    if (state == STATE_OKAY)
+    {
+      status = ssnprintf (buf, bufsize, ": All data sources are within range again.");
+      buf += status;
+      bufsize -= status;
+    }
+    else /* build non-okay notification message */
+    {
+      double min;
+      double max;
+
+      min = (state == STATE_ERROR) ? th->failure_min : th->warning_min;
+      max = (state == STATE_ERROR) ? th->failure_max : th->warning_max;
+
+      if (th->flags & UT_FLAG_INVERT)
+      {
+        if (!isnan (min) && !isnan (max))
+        {
+          status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
+              "%f. That is within the %s region of %f%s and %f%s.",
+              ds->ds[ds_index].name, values[ds_index],
+              (state == STATE_ERROR) ? "failure" : "warning",
+              min, ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "",
+              max, ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
+        }
+        else
+        {
+          status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
+              "%f. That is %s the %s threshold of %f%s.",
+              ds->ds[ds_index].name, values[ds_index],
+              isnan (min) ? "below" : "above",
+              (state == STATE_ERROR) ? "failure" : "warning",
+              isnan (min) ? max : min,
+              ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
+        }
+      }
+      else /* is not inverted */
+      {
+        status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
+            "%f. That is %s the %s threshold of %f%s.",
+            ds->ds[ds_index].name, values[ds_index],
+            (values[ds_index] < min) ? "below" : "above",
+            (state == STATE_ERROR) ? "failure" : "warning",
+            (values[ds_index] < min) ? min : max,
+            ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
+      }
+      buf += status;
+      bufsize -= status;
+    }
   }
 
+  /* adds meta to notification */
   plugin_notification_meta_add_string (&n, "DataSource",
       ds->ds[ds_index].name);
   plugin_notification_meta_add_double (&n, "CurrentValue", values[ds_index]);
@@ -640,57 +880,6 @@ static int ut_report_state (const data_set_t *ds,
   plugin_notification_meta_add_double (&n, "WarningMax", th->warning_max);
   plugin_notification_meta_add_double (&n, "FailureMin", th->failure_min);
   plugin_notification_meta_add_double (&n, "FailureMax", th->failure_max);
-
-  /* Send an okay notification */
-  if (state == STATE_OKAY)
-  {
-    status = ssnprintf (buf, bufsize, ": All data sources are within range again.");
-    buf += status;
-    bufsize -= status;
-  }
-  else
-  {
-    double min;
-    double max;
-
-    min = (state == STATE_ERROR) ? th->failure_min : th->warning_min;
-    max = (state == STATE_ERROR) ? th->failure_max : th->warning_max;
-
-    if (th->flags & UT_FLAG_INVERT)
-    {
-      if (!isnan (min) && !isnan (max))
-      {
-        status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
-            "%f. That is within the %s region of %f%s and %f%s.",
-            ds->ds[ds_index].name, values[ds_index],
-            (state == STATE_ERROR) ? "failure" : "warning",
-            min, ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "",
-            max, ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
-      }
-      else
-      {
-	status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
-	    "%f. That is %s the %s threshold of %f%s.",
-	    ds->ds[ds_index].name, values[ds_index],
-	    isnan (min) ? "below" : "above",
-	    (state == STATE_ERROR) ? "failure" : "warning",
-	    isnan (min) ? max : min,
-	    ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
-      }
-    }
-    else /* is not inverted */
-    {
-      status = ssnprintf (buf, bufsize, ": Data source \"%s\" is currently "
-	  "%f. That is %s the %s threshold of %f%s.",
-	  ds->ds[ds_index].name, values[ds_index],
-	  (values[ds_index] < min) ? "below" : "above",
-	  (state == STATE_ERROR) ? "failure" : "warning",
-	  (values[ds_index] < min) ? min : max,
-	  ((th->flags & UT_FLAG_PERCENTAGE) != 0) ? "%" : "");
-    }
-    buf += status;
-    bufsize -= status;
-  }
 
   plugin_dispatch_notification (&n);
 

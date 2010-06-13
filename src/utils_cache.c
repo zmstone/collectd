@@ -25,6 +25,7 @@
 #include "utils_avltree.h"
 #include "utils_cache.h"
 #include "utils_threshold.h"
+#include "utils_subst.h"
 #include "meta_data.h"
 
 #include <assert.h>
@@ -131,8 +132,12 @@ static int uc_send_notification (const char *name)
   char *plugin_instance;
   char *type;
   char *type_instance;
+  threshold_t th;
 
   notification_t n;
+
+  data_set_t ds;
+  value_list_t vl;
 
   name_copy = strdup (name);
   if (name_copy == NULL)
@@ -150,12 +155,25 @@ static int uc_send_notification (const char *name)
     return (-1);
   }
 
+  memset (&ds, '\0', sizeof (ds));
+  memset (&vl, '\0', sizeof (vl));
+  sstrncpy (vl.host, host, sizeof (vl.host));
+  sstrncpy (vl.plugin, plugin, sizeof (vl.plugin));
+  if (plugin_instance != NULL)
+    sstrncpy (vl.plugin_instance, plugin_instance, sizeof (vl.plugin_instance));
+  sstrncpy (ds.type, type, sizeof (ds.type));
+  sstrncpy (vl.type, type, sizeof (vl.type));
+  if (type_instance != NULL)
+    sstrncpy (vl.type_instance, type_instance, sizeof (vl.type_instance));
+
+
   /* Copy the associative members */
   notification_init (&n, NOTIF_FAILURE, /* host = */ NULL,
       host, plugin, plugin_instance, type, type_instance);
 
   sfree (name_copy);
   name_copy = host = plugin = plugin_instance = type = type_instance = NULL;
+
 
   pthread_mutex_lock (&cache_lock);
 
@@ -183,9 +201,41 @@ static int uc_send_notification (const char *name)
     return (-1);
   }
 
-  ssnprintf (n.message, sizeof (n.message),
-      "%s has not been updated for %i seconds.", name,
-      (int) (n.time - ce->last_update));
+  /* if the associated threshold has a missing message, then use custom
+   * message. FIXME: we do a threshold_search here and in uc_check_timeout
+   * (calling ut_check_interesting, but we really need to do this once */
+  if ( !ut_search_threshold(&vl, &th) &&
+      (th.missing_message != NULL) )
+  {
+    char msg[NOTIF_MAX_MSG_LEN];
+    char temp[NOTIF_MAX_MSG_LEN];
+
+    sstrncpy (msg, th.missing_message, sizeof (msg));
+    (void) ut_build_message (msg, NOTIF_MAX_MSG_LEN, th.missing_message,
+	&ds, 0, &vl, ce->values_gauge,
+	&n, &th);
+
+#define REPLACE_FIELD(t,v) \
+    if (subst_string (temp, sizeof (temp), msg, t, v) != NULL) \
+    sstrncpy (msg, temp, sizeof (msg));
+
+    char itoa_temp[NOTIF_MAX_MSG_LEN];
+#define ITOA(string,i) \
+    memset(string,0x00,sizeof(string)); \
+    snprintf(string, sizeof(string), "%i", i);
+
+    ITOA(itoa_temp, (int)(n.time - ce->last_update))
+      REPLACE_FIELD("%{missing}", itoa_temp)
+
+    (void) ssnprintf (n.message, sizeof (n.message),
+	"%s", msg);
+  }
+  else
+  {
+    ssnprintf (n.message, sizeof (n.message),
+	"%s has not been updated for %i seconds.", name,
+	(int) (n.time - ce->last_update));
+  }
 
   pthread_mutex_unlock (&cache_lock);
 

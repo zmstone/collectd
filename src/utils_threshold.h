@@ -41,6 +41,8 @@ typedef struct threshold_s
   gauge_t hysteresis;
   unsigned int flags;
   int hits;
+  char *message;
+  char *missing_message;
   struct threshold_s *next;
 } threshold_t;
 
@@ -83,5 +85,16 @@ int ut_check_interesting (const char *name);
  *     else: Error.
  */
 int ut_search_threshold (const value_list_t *vl, threshold_t *ret_threshold);
+
+
+/*
+ * Formats a notification message using specified patterns according to data
+ * passed as argument.
+ *
+ * Returns: the number of bytes in the output string.
+ */
+int ut_build_message(char *out, size_t bufsize, const char *fmt,
+    const data_set_t *ds, int ds_index, const value_list_t *vl, const gauge_t *values,
+    const notification_t *n, const threshold_t *th);
 
 #endif /* UTILS_THRESHOLD_H */
