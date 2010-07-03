@@ -735,17 +735,19 @@ static int ut_report_state (const data_set_t *ds,
   int status;
 
   /* Check if hits matched */
-  if ( (th->hits != 0) )
+  if (th->hits != 0)
   {
     int hits = uc_get_hits(ds,vl);
     /* The STATE_OKAY always reset hits, or if hits reaise the limit */
-    if ( (state == STATE_OKAY) || (hits > th->hits) )
+    if ((state == STATE_OKAY) || (hits > th->hits))
     {
         DEBUG("ut_report_state: reset uc_get_hits = 0");
-        uc_set_hits(ds,vl,0); /* reset hit counter and notify */
-    } else {
+        uc_set_hits (ds, vl, 0); /* reset hit counter and notify */
+    }
+    else
+    {
       DEBUG("ut_report_state: th->hits = %d, uc_get_hits = %d",th->hits,uc_get_hits(ds,vl));
-      (void) uc_inc_hits(ds,vl,1); /* increase hit counter */
+      (void) uc_inc_hits (ds, vl, 1); /* increase hit counter */
       return (0);
     }
   } /* end check hits */
