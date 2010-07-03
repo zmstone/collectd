@@ -1,6 +1,6 @@
 /**
  * collectd - src/utils_threshold.c
- * Copyright (C) 2007-2009  Florian octo Forster
+ * Copyright (C) 2007-2010  Florian octo Forster
  * Copyright (C) 2008-2009  Sebastian Harl
  * Copyright (C) 2009,2010  Andrés J. Díaz
  *
@@ -618,27 +618,29 @@ int ut_build_message(char *out, size_t bufsize, const char *fmt,
   /* TODO: We could provide here a way to use meta information on thresholds
    * directly in the future. */
   char msg[NOTIF_MAX_MSG_LEN];
-  char temp[NOTIF_MAX_MSG_LEN];
   gauge_t *rates;
   int rates_failed;
-
   int i;
 
   sstrncpy (msg, fmt, sizeof (msg));
 
-#define REPLACE_FIELD(t,v) \
-  if (subst_string (temp, sizeof (temp), msg, t, v) != NULL) \
-  sstrncpy (msg, temp, sizeof (msg));
+#define REPLACE_FIELD(t,v) do {                                              \
+  char temp[sizeof (msg)];                                                   \
+  if (subst_string (temp, sizeof (temp), msg, (t), (v)) != NULL)             \
+    sstrncpy (msg, temp, sizeof (msg));                                      \
+} while (0)
 
-  char ftoa_temp[NOTIF_MAX_MSG_LEN];
-#define FTOA(string,f) \
-  memset(string,0x00,sizeof(string)); \
-  snprintf(string, sizeof(string), "%f", f);
+#define REPLACE_FIELD_DBL(t,v) do {                                          \
+  char value_str[NOTIF_MAX_MSG_LEN];                                         \
+  ssnprintf (value_str, sizeof (value_str), "%g", (v));                      \
+  REPLACE_FIELD(t, value_str);                                               \
+} while (0)
 
-  char itoa_temp[NOTIF_MAX_MSG_LEN];
-#define ITOA(string,i) \
-  memset(string,0x00,sizeof(string)); \
-  snprintf(string, sizeof(string), "%i", i);
+#define REPLACE_FIELD_INT(t,v) do {                                          \
+  char value_str[NOTIF_MAX_MSG_LEN];                                         \
+  ssnprintf (value_str, sizeof (value_str), "%i", (v));                      \
+  REPLACE_FIELD(t, value_str);                                               \
+} while (0)
 
   REPLACE_FIELD ("%{host}", n->host);
   REPLACE_FIELD ("%{plugin}", n->plugin);
@@ -649,8 +651,7 @@ int ut_build_message(char *out, size_t bufsize, const char *fmt,
 
   /* This is the offending value, its equivalent to %{ds:value}, if
    * value is the data_source name. */
-  FTOA(ftoa_temp,values[ds_index])
-    REPLACE_FIELD ("%{value}", ftoa_temp);
+  REPLACE_FIELD_DBL ("%{value}", values[ds_index]);
 
   /* Now replace all %{ds:<template>} like target_notification does */
   rates_failed = 0;
@@ -689,29 +690,23 @@ int ut_build_message(char *out, size_t bufsize, const char *fmt,
   }
   sfree (rates);
 
-  if (th != NULL) {
+  if (th != NULL)
+  {
     if ( !isnan(th->warning_min)) {
-      FTOA(ftoa_temp,th->warning_min)
-        REPLACE_FIELD ("%{warning_min}", ftoa_temp);
+      REPLACE_FIELD_DBL ("%{warning_min}", th->warning_min);
     }
     if ( !isnan(th->warning_max)) {
-      FTOA(ftoa_temp,th->warning_max)
-        REPLACE_FIELD ("%{warning_max}", ftoa_temp);
+      REPLACE_FIELD_DBL ("%{warning_max}", th->warning_max);
     }
     if ( !isnan(th->failure_min)) {
-      FTOA(ftoa_temp,th->failure_min)
-        REPLACE_FIELD ("%{failure_min}", ftoa_temp);
+      REPLACE_FIELD_DBL ("%{failure_min}", th->failure_min);
     }
     if ( !isnan(th->failure_max)) {
-      FTOA(ftoa_temp,th->failure_max)
-        REPLACE_FIELD ("%{failure_max}", ftoa_temp);
+      REPLACE_FIELD_DBL ("%{failure_max}", th->failure_max);
     }
 
-    FTOA(ftoa_temp,th->hysteresis)
-      REPLACE_FIELD ("%{hysteresis}", ftoa_temp);
-
-    ITOA(itoa_temp,th->hits)
-      REPLACE_FIELD ("%{hits}", itoa_temp);
+    REPLACE_FIELD_DBL ("%{hysteresis}", th->hysteresis);
+    REPLACE_FIELD_INT ("%{hits}", th->hits);
   }
 
   return ssnprintf (out, bufsize, "%s", msg);
