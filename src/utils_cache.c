@@ -1,6 +1,7 @@
 /**
  * collectd - src/utils_cache.c
  * Copyright (C) 2007,2008  Florian octo Forster
+ * Copyright (C) 2010       Andrés J. Díaz
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -17,6 +18,7 @@
  *
  * Author:
  *   Florian octo Forster <octo at verplant.org>
+ *   Andrés J. Díaz <ajdiaz at connectical.com>
  **/
 
 #include "collectd.h"

@@ -2,7 +2,7 @@
  * collectd - src/utils_threshold.c
  * Copyright (C) 2007-2009  Florian octo Forster
  * Copyright (C) 2008-2009  Sebastian Harl
- * Copyright (C) 2009       Andrés J. Díaz
+ * Copyright (C) 2009,2010  Andrés J. Díaz
  *
  *
  * This program is free software; you can redistribute it and/or modify it
