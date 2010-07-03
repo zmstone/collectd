@@ -211,26 +211,19 @@ static int uc_send_notification (const char *name)
   {
     char msg[NOTIF_MAX_MSG_LEN];
     char temp[NOTIF_MAX_MSG_LEN];
+    char missing[NOTIF_MAX_MSG_LEN];
 
     sstrncpy (msg, th.missing_message, sizeof (msg));
-    (void) ut_build_message (msg, NOTIF_MAX_MSG_LEN, th.missing_message,
-	&ds, 0, &vl, ce->values_gauge,
+    ut_build_message (msg, sizeof (msg), th.missing_message,
+	&ds, /* ds index = */ 0, &vl, ce->values_gauge,
 	&n, &th);
 
-#define REPLACE_FIELD(t,v) \
-    if (subst_string (temp, sizeof (temp), msg, t, v) != NULL) \
-    sstrncpy (msg, temp, sizeof (msg));
+    ssnprintf (missing, sizeof(missing), "%li",
+	(long int) (n.time - ce->last_update));
+    if (subst_string (temp, sizeof (temp), msg, "%{missing}", missing) != NULL)
+      sstrncpy (msg, temp, sizeof (msg));
 
-    char itoa_temp[NOTIF_MAX_MSG_LEN];
-#define ITOA(string,i) \
-    memset(string,0x00,sizeof(string)); \
-    snprintf(string, sizeof(string), "%i", i);
-
-    ITOA(itoa_temp, (int)(n.time - ce->last_update))
-      REPLACE_FIELD("%{missing}", itoa_temp)
-
-    (void) ssnprintf (n.message, sizeof (n.message),
-	"%s", msg);
+    sstrncpy (n.message, msg, sizeof (n.message));
   }
   else
   {
