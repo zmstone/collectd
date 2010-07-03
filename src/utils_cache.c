@@ -168,14 +168,12 @@ static int uc_send_notification (const char *name)
   if (type_instance != NULL)
     sstrncpy (vl.type_instance, type_instance, sizeof (vl.type_instance));
 
-
   /* Copy the associative members */
   notification_init (&n, NOTIF_FAILURE, /* host = */ NULL,
       host, plugin, plugin_instance, type, type_instance);
 
   sfree (name_copy);
   name_copy = host = plugin = plugin_instance = type = type_instance = NULL;
-
 
   pthread_mutex_lock (&cache_lock);
 
@@ -190,7 +188,6 @@ static int uc_send_notification (const char *name)
   if (status != 0)
   {
     pthread_mutex_unlock (&cache_lock);
-    sfree (name_copy);
     return (-1);
   }
     
@@ -199,7 +196,6 @@ static int uc_send_notification (const char *name)
   {
     ce->state = STATE_OKAY;
     pthread_mutex_unlock (&cache_lock);
-    sfree (name_copy);
     return (-1);
   }
 
