@@ -560,7 +560,7 @@ int ut_config (const oconfig_item_t *ci)
 /* }}} */
 
 static threshold_t *threshold_search (const value_list_t *vl)
-{
+{ /* {{{ */
   threshold_t *th;
 
   if ((th = threshold_get (vl->host, vl->plugin, vl->plugin_instance,
@@ -601,7 +601,7 @@ static threshold_t *threshold_search (const value_list_t *vl)
     return (th);
 
   return (NULL);
-} /* threshold_t *threshold_search */
+} /* }}} threshold_t *threshold_search */
 
 /* char *ut_build_message
  *
@@ -613,7 +613,7 @@ static threshold_t *threshold_search (const value_list_t *vl)
 int ut_build_message(char *out, size_t bufsize, const char *fmt,
     const data_set_t *ds, int ds_index, const value_list_t *vl, const gauge_t *values,
     const notification_t *n, const threshold_t *th)
-{
+{ /* {{{ */
 
   /* TODO: We could provide here a way to use meta information on thresholds
    * directly in the future. */
@@ -710,7 +710,7 @@ int ut_build_message(char *out, size_t bufsize, const char *fmt,
   }
 
   return ssnprintf (out, bufsize, "%s", msg);
-} /* int ut_build_message */
+} /* }}} int ut_build_message */
 
 /*
  * int ut_report_state
