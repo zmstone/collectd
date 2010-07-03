@@ -219,21 +219,6 @@ static int ut_config_type_min (threshold_t *th, oconfig_item_t *ci)
   return (0);
 } /* int ut_config_type_min */
 
-static int ut_config_type_hits (threshold_t *th, oconfig_item_t *ci)
-{
-  if ((ci->values_num != 1)
-      || (ci->values[0].type != OCONFIG_TYPE_NUMBER))
-  {
-    WARNING ("threshold values: The `%s' option needs exactly one "
-      "number argument.", ci->key);
-    return (-1);
-  }
-
-  th->hits = ci->values[0].value.number;
-
-  return (0);
-} /* int ut_config_type_hits */
-
 static int ut_config_type_hysteresis (threshold_t *th, oconfig_item_t *ci)
 {
   if ((ci->values_num != 1)
@@ -248,62 +233,6 @@ static int ut_config_type_hysteresis (threshold_t *th, oconfig_item_t *ci)
 
   return (0);
 } /* int ut_config_type_hysteresis */
-
-static int ut_config_type_message (threshold_t *th, oconfig_item_t *ci)
-{
-
-  if ((ci->values_num != 1)
-      || (ci->values[0].type != OCONFIG_TYPE_STRING))
-  {
-    WARNING ("threshold values: The `%s' option needs exactly one "
-      "string argument.", ci->key);
-    return (-1);
-  }
-
-  if (ci->values[0].value.string[0] == 0)
-  {
-    WARNING ("threshold values: The `%s' option does not accept empty strings.",
-        ci->key);
-    return (-1);
-  }
-
-  th->message = strdup (ci->values[0].value.string);
-  if (th->message == NULL)
-  {
-    ERROR ("ut_config_type_message: sstrdup failed.");
-    return (-1);
-  }
-
-  return (0);
-} /* int ut_config_type_message */
-
-static int ut_config_type_missingmessage (threshold_t *th, oconfig_item_t *ci)
-{
-
-  if ((ci->values_num != 1)
-      || (ci->values[0].type != OCONFIG_TYPE_STRING))
-  {
-    WARNING ("threshold values: The `%s' option needs exactly one "
-      "string argument.", ci->key);
-    return (-1);
-  }
-
-  if (ci->values[0].value.string[0] == 0)
-  {
-    WARNING ("threshold values: The `%s' option does not accept empty strings.",
-        ci->key);
-    return (-1);
-  }
-
-  th->missing_message = strdup (ci->values[0].value.string);
-  if (th->missing_message == NULL)
-  {
-    ERROR ("ut_config_type_missingmessage: sstrdup failed.");
-    return (-1);
-  }
-
-  return (0);
-} /* int ut_config_type_missingmessage */
 
 static int ut_config_type (const threshold_t *th_orig, oconfig_item_t *ci)
 {
@@ -361,13 +290,13 @@ static int ut_config_type (const threshold_t *th_orig, oconfig_item_t *ci)
     else if (strcasecmp ("Percentage", option->key) == 0)
       status = cf_util_get_flag (option, &th.flags, UT_FLAG_PERCENTAGE);
     else if (strcasecmp ("Hits", option->key) == 0)
-      status = ut_config_type_hits (&th, option);
+      status = cf_util_get_int (option, &th.hits);
     else if (strcasecmp ("Hysteresis", option->key) == 0)
       status = ut_config_type_hysteresis (&th, option);
     else if (strcasecmp ("Message", option->key) == 0)
-      status = ut_config_type_message (&th, option);
+      status = cf_util_get_string (option, &th.message);
     else if (strcasecmp ("MissingMessage", option->key) == 0)
-      status = ut_config_type_missingmessage (&th, option);
+      status = cf_util_get_string (option, &th.missing_message);
     else
     {
       WARNING ("threshold values: Option `%s' not allowed inside a `Type' "
