@@ -1185,6 +1185,19 @@ collectd_LDADD += "-dlopen" wireless.la
 collectd_DEPENDENCIES += wireless.la
 endif
 
+if BUILD_PLUGIN_WPAR
+pkglib_LTLIBRARIES += wpar.la
+wpar_la_SOURCES = wpar.c
+wpar_la_CFLAGS = $(AM_CFLAGS)
+wpar_la_LDFLAGS = -module -avoid-version
+wpar_la_LIBADD =
+if BUILD_WITH_PERFSTAT
+wpar_la_LIBADD += -lperfstat
+endif
+collectd_LDADD += "-dlopen" wpar.la
+collectd_DEPENDENCIES += wpar.la
+endif
+
 if BUILD_PLUGIN_WRITE_HTTP
 pkglib_LTLIBRARIES += write_http.la
 write_http_la_SOURCES = write_http.c \
