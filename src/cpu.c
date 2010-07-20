@@ -143,6 +143,8 @@ static int maxcpu;
 static perfstat_cpu_t *perfcpu;
 static int numcpu;
 static int pnumcpu;
+static u_longlong_t *cpu_total;
+static u_longlong_t *pcpu_total;
 #endif /* HAVE_PERFSTAT */
 
 static int init (void)
@@ -562,6 +564,7 @@ static int cpu_read (void)
 #elif defined(HAVE_PERFSTAT)
 	perfstat_id_t id;
 	perfstat_cpu_t *pcpu;
+	u_longlong_t *cpu_swap;
 	int i, cpus;
 
 	numcpu =  perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0);
@@ -578,6 +581,14 @@ static int cpu_read (void)
 		if (perfcpu != NULL) 
 			free(perfcpu);
 		perfcpu = malloc(numcpu * sizeof(perfstat_cpu_t));
+
+		if (cpu_total != NULL)
+			free(cpu_total);
+		cpu_total = (u_longlong_t *)calloc(numcpu, sizeof(u_longlong_t));
+
+		if (pcpu_total != NULL)
+			free(pcpu_total);
+		pcpu_total = (u_longlong_t *)calloc(numcpu, sizeof(u_longlong_t));
 	}
 	pnumcpu = numcpu;
 
@@ -592,11 +603,19 @@ static int cpu_read (void)
 
 	for (i = 0, pcpu = perfcpu; i < cpus; i++, pcpu++)
 	{
+		cpu_total[i] = pcpu->idle + pcpu->sys + pcpu->user + pcpu->wait;
+		if (cpu_total[i] == pcpu_total[i])
+			continue;
+
 		submit (i, "idle",   (counter_t) pcpu->idle);
 		submit (i, "system", (counter_t) pcpu->sys);
 		submit (i, "user",   (counter_t) pcpu->user);
 		submit (i, "wait",   (counter_t) pcpu->wait);
 	}
+
+	cpu_swap = pcpu_total;
+	pcpu_total = cpu_total;
+	cpu_total = cpu_swap;
 #endif /* HAVE_PERFSTAT */
 
 	return (0);
