@@ -137,6 +137,7 @@
 #@BUILD_PLUGIN_VMEM_TRUE@LoadPlugin vmem
 #@BUILD_PLUGIN_VSERVER_TRUE@LoadPlugin vserver
 #@BUILD_PLUGIN_WIRELESS_TRUE@LoadPlugin wireless
+#@BUILD_PLUGIN_WPAR_TRUE@LoadPlugin wpar
 #@BUILD_PLUGIN_WRITE_HTTP_TRUE@LoadPlugin write_http
 #@BUILD_PLUGIN_XMMS_TRUE@LoadPlugin xmms
 #@BUILD_PLUGIN_ZFS_ARC_TRUE@LoadPlugin zfs_arc
