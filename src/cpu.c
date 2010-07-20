@@ -561,6 +561,7 @@ static int cpu_read (void)
 
 #elif defined(HAVE_PERFSTAT)
 	perfstat_id_t id;
+	perfstat_cpu_t *pcpu;
 	int i, cpus;
 
 	numcpu =  perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0);
@@ -589,12 +590,12 @@ static int cpu_read (void)
 		return (-1);
 	}
 
-	for (i = 0; i < cpus; i++) 
+	for (i = 0, pcpu = perfcpu; i < cpus; i++, pcpu++)
 	{
-		submit (i, "idle",   (counter_t) perfcpu[i].idle);
-		submit (i, "system", (counter_t) perfcpu[i].sys);
-		submit (i, "user",   (counter_t) perfcpu[i].user);
-		submit (i, "wait",   (counter_t) perfcpu[i].wait);
+		submit (i, "idle",   (counter_t) pcpu->idle);
+		submit (i, "system", (counter_t) pcpu->sys);
+		submit (i, "user",   (counter_t) pcpu->user);
+		submit (i, "wait",   (counter_t) pcpu->wait);
 	}
 #endif /* HAVE_PERFSTAT */
 
