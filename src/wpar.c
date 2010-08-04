@@ -32,11 +32,8 @@
 #include <libperfstat.h>
 
 static int pagesize;
-static int nwpar = -1;
-static int pwpar;
-static perfstat_wpar_total_t *wpar_total;
-static perfstat_memory_total_wpar_t wmemory;
-static perfstat_cpu_total_wpar_t wcpu;
+static int wpar_total_num;
+static perfstat_wpar_total_t *wpar_total = NULL;
 
 static int wpar_init(void) /* {{{ */
 {
@@ -101,70 +98,117 @@ static void load_submit (const char *plugin_instance, gauge_t snum, gauge_t mnum
 
 static int wpar_read (void) /* {{{ */
 {
-  int i,wpars;
-  float snum, mnum, lnum;
+  int i;
+  int nwpar;
   perfstat_id_wpar_t id_wpar;
 
-  nwpar = perfstat_wpar_total(NULL, NULL, sizeof(perfstat_wpar_total_t), 0);
-  if (nwpar == -1)
+  /* Read the number of partitions */
+  nwpar = perfstat_wpar_total (/* id = */ NULL,
+      /* (out) wpar_total */ NULL,
+      /* size = */ sizeof (perfstat_wpar_total_t),
+      /* nmemb = */ 0);
+  if (nwpar < 0)
   {
     char errbuf[1024];
-    WARNING ("wpar plugin: perfstat_wpar_total: %s",
+    WARNING ("wpar plugin: perfstat_wpar_total failed: %s",
         sstrerror (errno, errbuf, sizeof (errbuf)));
     return (-1);
   }
-
-  if (pwpar != nwpar ||  wpar_total == NULL)
+  else if (nwpar == 0)
   {
-    if (wpar_total != NULL)
-      free(wpar_total);
-    wpar_total = malloc(nwpar * sizeof(perfstat_wpar_total_t));
+    /* Avoid "realloc returned NULL" messages */
+    INFO ("wpar plugin: perfstat_wpar_total returned zero.");
+    return (0);
   }
-  pwpar = nwpar;
 
-  bzero(&id_wpar, sizeof(perfstat_id_wpar_t));
+  /* If necessary, reallocate the "wpar_total" memory. */
+  if ((wpar_total_num != nwpar) || (wpar_total == NULL))
+  {
+    perfstat_wpar_total_t *tmp;
+
+    tmp = realloc (wpar_total, nwpar * sizeof (*wpar_total));
+    if (tmp == NULL)
+    {
+      ERROR ("wpar plugin: realloc failed.");
+      return (ENOMEM);
+    }
+    wpar_total = tmp;
+  }
+  wpar_total_num = nwpar;
+
+  memset (&id_wpar, 0, sizeof (id_wpar));
   id_wpar.spec = WPARID;
   id_wpar.u.wpar_id = FIRST_WPARID;
-  if ((wpars = perfstat_wpar_total(&id_wpar, wpar_total, sizeof(perfstat_wpar_total_t), nwpar)) < 0)
+
+  /* Now actually query the data */
+  nwpar = perfstat_wpar_total (/* id = */ &id_wpar,
+      /* (out) */ wpar_total,
+      /* size = */ sizeof(perfstat_wpar_total_t),
+      /* nmemb = */ wpar_total_num);
+  if (nwpar < 0)
   {
     char errbuf[1024];
-    WARNING ("cpu plugin: perfstat_wpar_total: %s",
+    WARNING ("cpu plugin: perfstat_wpar_total failed: %s",
         sstrerror (errno, errbuf, sizeof (errbuf)));
     return (-1);
   }
-
-  for (i = 0; i < wpars; i++)
+  else if (nwpar > wpar_total_num)
   {
-    char *wname = wpar_total[i].name;
+    INFO ("wpar plugin: Number of WPARs increased during allocation. "
+        "Will ignore %i WPAR(s).", nwpar - wpar_total_num);
+    nwpar = wpar_total_num;
+  }
 
-    bzero(&id_wpar, sizeof(perfstat_id_wpar_t));
+  /* Iterate over all WPARs and dispatch information */
+  for (i = 0; i < nwpar; i++)
+  {
+    const char *wname = wpar_total[i].name;
+    perfstat_memory_total_wpar_t wmemory;
+    perfstat_cpu_total_wpar_t wcpu;
+    float factor, snum, mnum, lnum;
+    int status;
+
+    /* Update the ID structure */
+    memset (&id_wpar, 0, sizeof (id_wpar));
     id_wpar.spec = WPARID;
     id_wpar.u.wpar_id = wpar_total[i].wpar_id;
 
-    if (perfstat_memory_total_wpar(&id_wpar, &wmemory, sizeof(perfstat_memory_total_wpar_t), 1) < 0)
+    /*
+     * Memory
+     */
+    status = perfstat_memory_total_wpar(/* id = */ &id_wpar,
+        /* (out) */ &wmemory,
+        /* size = */ sizeof(wmemory), /* nmemb = */ 1);
+    if (status < 0)
     {
       char errbuf[1024];
-      WARNING ("memory plugin: perfstat_memory_total_wpar failed: %s",
-          sstrerror (errno, errbuf, sizeof (errbuf)));
-      return (-1);
+      WARNING ("memory plugin: perfstat_memory_total_wpar(%s) failed: %s",
+          wname, sstrerror (errno, errbuf, sizeof (errbuf)));
+      continue;
     }
     memory_submit (wname, "used",   wmemory.real_inuse * pagesize);
     memory_submit (wname, "free",   wmemory.real_free * pagesize);
     memory_submit (wname, "cached", wmemory.numperm * pagesize);
     memory_submit (wname, "total",  wmemory.real_total * pagesize);
 
-
-    if (perfstat_cpu_total_wpar(&id_wpar, &wcpu, sizeof(perfstat_cpu_total_wpar_t), 1) < 0)
+    /*
+     * CPU and load
+     */
+    status = perfstat_cpu_total_wpar(/* id = */ &id_wpar,
+        /* (out) */ &wcpu,
+        /* size = */ sizeof(wcpu), /* nmemb = */ 1);
+    if (status < 0)
     {
       char errbuf[1024];
-      WARNING ("memory plugin: perfstat_cpu_total_wpar failed: %s",
-          sstrerror (errno, errbuf, sizeof (errbuf)));
-      return (-1);
+      WARNING ("memory plugin: perfstat_cpu_total_wpar(%s) failed: %s",
+          wname, sstrerror (errno, errbuf, sizeof (errbuf)));
+      continue;
     }
 
-    snum = (float)wcpu.loadavg[0]/(float)(1<<SBITS);
-    mnum = (float)wcpu.loadavg[1]/(float)(1<<SBITS);
-    lnum = (float)wcpu.loadavg[2]/(float)(1<<SBITS);
+    factor = 1.0 / ((gauge_t) (1 << SBITS));
+    snum = ((gauge_t) wcpu.loadavg[0]) * factor;
+    mnum = ((gauge_t) wcpu.loadavg[1]) * factor;
+    lnum = ((gauge_t) wcpu.loadavg[2]) * factor;
 
     load_submit (wname, snum, mnum, lnum);
 
@@ -172,7 +216,7 @@ static int wpar_read (void) /* {{{ */
     cpu_submit (wname, "system", (counter_t) wcpu.psys);
     cpu_submit (wname, "user",   (counter_t) wcpu.puser);
     cpu_submit (wname, "wait",   (counter_t) wcpu.pwait);
-  }
+  } /* for (i = 0 ... nwpar) */
 
   return (0);
 } /* }}} int wpar_read */
