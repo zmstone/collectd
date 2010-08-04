@@ -140,11 +140,8 @@ static int maxcpu;
 /* #endif  HAVE_LIBSTATGRAB */
 
 #elif defined(HAVE_PERFSTAT)
-static perfstat_cpu_t *perfcpu;
-static int numcpu;
-static int pnumcpu;
-static u_longlong_t *cpu_total;
-static u_longlong_t *pcpu_total;
+static u_longlong_t *cpu_total_prev = NULL;
+static int numcpu_prev = 0;
 #endif /* HAVE_PERFSTAT */
 
 static int init (void)
@@ -562,49 +559,61 @@ static int cpu_read (void)
 /* #endif HAVE_LIBSTATGRAB */
 
 #elif defined(HAVE_PERFSTAT)
+	perfstat_cpu_t *perfcpu = NULL;
+	u_longlong_t *cpu_total = NULL;
 	perfstat_id_t id;
 	perfstat_cpu_t *pcpu;
-	u_longlong_t *cpu_swap;
-	int i, cpus;
+	u_longlong_t *temp;
+	int numcpu;
+	int i;
 
-	numcpu =  perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0);
-	if(numcpu == -1)
+	numcpu = perfstat_cpu (/* id = */ NULL, /* out */ NULL,
+			/* size = */ sizeof(perfstat_cpu_t), /* nmemb = */ 0);
+	if (numcpu < 0)
 	{
 		char errbuf[1024];
-		WARNING ("cpu plugin: perfstat_cpu: %s",
+		WARNING ("cpu plugin: perfstat_cpu failed: %s",
 			sstrerror (errno, errbuf, sizeof (errbuf)));
 		return (-1);
+	}
+
+	/* Allocate required buffers */
+	perfcpu = calloc(numcpu, sizeof (*perfcpu));
+	cpu_total = calloc (numcpu, sizeof (*cpu_total));
+	if ((perfcpu == NULL) || (cpu_total == NULL))
+	{
+		sfree (perfcpu);
+		sfree (cpu_total);
+		ERROR ("cpu plugin: calloc failed.");
+		return (ENOMEM);
 	}
 	
-	if (pnumcpu != numcpu || perfcpu == NULL) 
-	{
-		if (perfcpu != NULL) 
-			free(perfcpu);
-		perfcpu = malloc(numcpu * sizeof(perfstat_cpu_t));
-
-		if (cpu_total != NULL)
-			free(cpu_total);
-		cpu_total = (u_longlong_t *)calloc(numcpu, sizeof(u_longlong_t));
-
-		if (pcpu_total != NULL)
-			free(pcpu_total);
-		pcpu_total = (u_longlong_t *)calloc(numcpu, sizeof(u_longlong_t));
-	}
-	pnumcpu = numcpu;
-
-	id.name[0] = '\0';
-	if ((cpus = perfstat_cpu(&id, perfcpu, sizeof(perfstat_cpu_t), numcpu)) < 0)
+	/* Actually query the data. */
+	memset (&id, 0, sizeof (id));
+	i = perfstat_cpu (/* id = */ &id, /* out */ perfcpu,
+			/* size = */ sizeof (*perfcpu), /* nmemb = */ numcpu);
+	if (i < 0)
 	{
 		char errbuf[1024];
-		WARNING ("cpu plugin: perfstat_cpu: %s",
+		WARNING ("cpu plugin: perfstat_cpu failed: %s",
 			sstrerror (errno, errbuf, sizeof (errbuf)));
 		return (-1);
 	}
-
-	for (i = 0, pcpu = perfcpu; i < cpus; i++, pcpu++)
+	else if (i < numcpu)
 	{
+		/* The number of CPUs has decreased since determining "numcpu".
+		 * Upate the variable. If the number of CPUs *increases*
+		 * (i > numcpu), ignore that. We'll get them on the next
+		 * iteration. */
+		numcpu = i;
+	}
+
+	for (i = 0, pcpu = perfcpu; i < numcpu; i++, pcpu++)
+	{
+		/* If all the counters stay the same, the CPU is offline and we
+		 * don't dispatch any values. */
 		cpu_total[i] = pcpu->idle + pcpu->sys + pcpu->user + pcpu->wait;
-		if (cpu_total[i] == pcpu_total[i])
+		if ((i < numcpu_prev) && (cpu_total[i] == cpu_total_prev[i]))
 			continue;
 
 		submit (i, "idle",   (counter_t) pcpu->idle);
@@ -613,13 +622,19 @@ static int cpu_read (void)
 		submit (i, "wait",   (counter_t) pcpu->wait);
 	}
 
-	cpu_swap = pcpu_total;
-	pcpu_total = cpu_total;
-	cpu_total = cpu_swap;
+	/* Free the old data */
+	sfree (cpu_total_prev);
+
+	/* Keep the current data */
+	cpu_total_prev = cpu_total;
+	numcpu_prev = numcpu;
+
+	/* Free performance buffer */
+	sfree (perfcpu);
 #endif /* HAVE_PERFSTAT */
 
 	return (0);
-}
+} /* int cpu_read */
 
 void module_register (void)
 {
