@@ -32,19 +32,19 @@
 #include <libperfstat.h>
 
 static int pagesize;
-int nwpar = -1;
-int pwpar;
+static int nwpar = -1;
+static int pwpar;
 static perfstat_wpar_total_t *wpar_total;
 static perfstat_memory_total_wpar_t wmemory;
 static perfstat_cpu_total_wpar_t wcpu;
 
-static int wpar_init(void)
+static int wpar_init(void) /* {{{ */
 {
   pagesize = getpagesize ();
   return (0);
-}
+} /* }}} int wpar_init */
 
-static void memory_submit (const char *plugin_instance, const char *type_instance, gauge_t value)
+static void memory_submit (const char *plugin_instance, const char *type_instance, gauge_t value) /* {{{ */
 {
   value_t values[1];
   value_list_t vl = VALUE_LIST_INIT;
@@ -60,9 +60,9 @@ static void memory_submit (const char *plugin_instance, const char *type_instanc
   sstrncpy (vl.type_instance, type_instance, sizeof (vl.type_instance));
 
   plugin_dispatch_values (&vl);
-}
+} /* }}} void memory_submit */
 
-static void cpu_submit (const char *plugin_instance, const char *type_instance, counter_t value)
+static void cpu_submit (const char *plugin_instance, const char *type_instance, counter_t value) /* {{{ */
 {
   value_t values[1];
   value_list_t vl = VALUE_LIST_INIT;
@@ -78,9 +78,9 @@ static void cpu_submit (const char *plugin_instance, const char *type_instance, 
   sstrncpy (vl.type_instance, type_instance, sizeof (vl.type_instance));
 
   plugin_dispatch_values (&vl);
-}
+} /* }}} void cpu_submit */
 
-static void load_submit (const char *plugin_instance, gauge_t snum, gauge_t mnum, gauge_t lnum)
+static void load_submit (const char *plugin_instance, gauge_t snum, gauge_t mnum, gauge_t lnum) /* {{{ */
 {
   value_t values[3];
   value_list_t vl = VALUE_LIST_INIT;
@@ -97,9 +97,9 @@ static void load_submit (const char *plugin_instance, gauge_t snum, gauge_t mnum
   sstrncpy (vl.type, "load", sizeof (vl.type));
 
   plugin_dispatch_values (&vl);
-}
+} /* }}} void load_submit */
 
-static int wpar_read (void)
+static int wpar_read (void) /* {{{ */
 {
   int i,wpars;
   float snum, mnum, lnum;
@@ -175,10 +175,12 @@ static int wpar_read (void)
   }
 
   return (0);
-}
+} /* }}} int wpar_read */
 
 void module_register (void)
 {
   plugin_register_init ("wpar", wpar_init);
   plugin_register_read ("wpar", wpar_read);
 }
+
+/* vim: set sw=2 sts=2 et fdm=marker : */
