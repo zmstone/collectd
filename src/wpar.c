@@ -89,7 +89,7 @@ static void load_submit (const char *plugin_instance, gauge_t snum, gauge_t mnum
   vl.values = values;
   vl.values_len = STATIC_ARRAY_SIZE (values);
   sstrncpy (vl.host, hostname_g, sizeof (vl.host));
-  sstrncpy (vl.plugin, "load", sizeof (vl.plugin));
+  sstrncpy (vl.plugin, "wpar", sizeof (vl.plugin));
   sstrncpy (vl.plugin_instance, plugin_instance, sizeof (vl.plugin_instance));
   sstrncpy (vl.type, "load", sizeof (vl.type));
 
@@ -148,7 +148,7 @@ static int wpar_read (void) /* {{{ */
   if (nwpar < 0)
   {
     char errbuf[1024];
-    WARNING ("cpu plugin: perfstat_wpar_total failed: %s",
+    WARNING ("wpar plugin: perfstat_wpar_total failed: %s",
         sstrerror (errno, errbuf, sizeof (errbuf)));
     return (-1);
   }
@@ -182,7 +182,7 @@ static int wpar_read (void) /* {{{ */
     if (status < 0)
     {
       char errbuf[1024];
-      WARNING ("memory plugin: perfstat_memory_total_wpar(%s) failed: %s",
+      WARNING ("wpar plugin: perfstat_memory_total_wpar(%s) failed: %s",
           wname, sstrerror (errno, errbuf, sizeof (errbuf)));
       continue;
     }
@@ -200,7 +200,7 @@ static int wpar_read (void) /* {{{ */
     if (status < 0)
     {
       char errbuf[1024];
-      WARNING ("memory plugin: perfstat_cpu_total_wpar(%s) failed: %s",
+      WARNING ("wpar plugin: perfstat_cpu_total_wpar(%s) failed: %s",
           wname, sstrerror (errno, errbuf, sizeof (errbuf)));
       continue;
     }
