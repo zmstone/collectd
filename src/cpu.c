@@ -563,7 +563,6 @@ static int cpu_read (void)
 	u_longlong_t *cpu_total = NULL;
 	perfstat_id_t id;
 	perfstat_cpu_t *pcpu;
-	u_longlong_t *temp;
 	int numcpu;
 	int i;
 
