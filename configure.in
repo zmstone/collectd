@@ -2639,6 +2639,46 @@ then
 fi
 # }}}
 
+# --with-libzmq {{{
+AC_ARG_WITH(libzmq, [AS_HELP_STRING([--with-libzmq@<:@=PREFIX@:>@], [Path to libzmq.])],
+[
+	if test "x$withval" != "xno" && test "x$withval" != "xyes"
+	then
+		LDFLAGS="$LDFLAGS -L$withval/lib"
+		CPPFLAGS="$CPPFLAGS -I$withval/include"
+		with_libzmq="yes"
+	else
+		with_libzmq="$withval"
+	fi
+],
+[
+	with_libzmq="yes"
+])
+if test "x$with_libzmq" = "xyes"
+then
+	AC_CHECK_LIB(zmq, zmq_init,
+	[
+		AC_DEFINE(HAVE_LIBZMQ, 1, [Define to 1 if you have the ZeroMQ library (-lzmq).])
+	], [with_libzmq="no (libzmq not found)"])
+fi
+if test "x$with_libzmq" = "xyes"
+then
+	AC_CHECK_HEADERS(zmq.h,
+	[
+		AC_DEFINE(HAVE_ZMQ_H, 1, [Define to 1 if you have the <zmq.h> header file.])
+	], [with_libzmq="no (zmq.h not found)"])
+fi
+if test "x$with_libzmq" = "xyes"
+then
+	collect_libzmq=1
+else
+	collect_libzmq=0
+fi
+AC_DEFINE_UNQUOTED(COLLECT_LIBZMQ, [$collect_libzmq],
+	[Wether or not to use the ZeroMQ library])
+AM_CONDITIONAL(BUILD_WITH_LIBZMQ, test "x$with_libzmq" = "xyes")
+# }}}
+
 # --with-libpcap {{{
 AC_ARG_WITH(libpcap, [AS_HELP_STRING([--with-libpcap@<:@=PREFIX@:>@], [Path to libpcap.])],
 [
@@ -4564,6 +4604,7 @@ AC_PLUGIN([wireless],    [$plugin_wireless],   [Wireless statistics])
 AC_PLUGIN([write_http],  [$with_libcurl],      [HTTP output plugin])
 AC_PLUGIN([write_redis], [$with_libcredis],    [Redis output plugin])
 AC_PLUGIN([xmms],        [$with_libxmms],      [XMMS statistics])
+AC_PLUGIN([zeromq],      [$with_libzmq],       [ZeroMQ communication plugin])
 AC_PLUGIN([zfs_arc],     [$plugin_zfs_arc],    [ZFS ARC statistics])
 
 dnl Default configuration file
@@ -4773,6 +4814,7 @@ Configuration:
     libxmms . . . . . . . $with_libxmms
     libyajl . . . . . . . $with_libyajl
     libevent  . . . . . . $with_libevent
+    libzmq  . . . . . . . $with_libzmq
     protobuf-c  . . . . . $have_protoc_c
     oracle  . . . . . . . $with_oracle
     python  . . . . . . . $with_python
@@ -4886,6 +4928,7 @@ Configuration:
     write_http  . . . . . $enable_write_http
     write_redis . . . . . $enable_write_redis
     xmms  . . . . . . . . $enable_xmms
+    zeromq  . . . . . . . $enable_zeromq
     zfs_arc . . . . . . . $enable_zfs_arc
 
 EOF

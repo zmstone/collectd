@@ -1243,6 +1243,16 @@ collectd_LDADD += "-dlopen" xmms.la
 collectd_DEPENDENCIES += xmms.la
 endif
 
+if BUILD_PLUGIN_ZEROMQ
+pkglib_LTLIBRARIES += zeromq.la
+zeromq_la_SOURCES = zeromq.c
+zeromq_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_LIBZMQ_CFLAGS)
+zeromq_la_LDFLAGS = -module -avoid-version
+zeromq_la_LIBADD = $(BUILD_WITH_ZEROMQ_LIBS)
+collectd_LDADD += "-dlopen" zeromq.la
+collectd_DEPENDENCIES += zeromq.la
+endif
+
 if BUILD_PLUGIN_ZFS_ARC
 pkglib_LTLIBRARIES += zfs_arc.la
 zfs_arc_la_SOURCES = zfs_arc.c
