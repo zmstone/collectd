@@ -873,6 +873,7 @@ static void *receive_thread (void __attribute__((unused)) *arg)
   int status;
   zmq_msg_t msg;
   char *data = NULL;
+  size_t data_size;
   
   while( thread_running ) {
     status = zmq_msg_init(&msg);
@@ -972,7 +973,8 @@ void free_data(void *data, void *hint)
 
 #define PACKET_SIZE   512
 
-static int write_value (const data_set_t *ds, const value_list_t *vl)
+static int write_value (const data_set_t *ds, const value_list_t *vl,
+		user_data_t __attribute__((unused)) *user_data)
 {
   zmq_msg_t msg;
   char      *send_buffer;
@@ -990,7 +992,7 @@ static int write_value (const data_set_t *ds, const value_list_t *vl)
   real_size = add_to_buffer(send_buffer, send_buffer_size, &send_buffer_vl, ds, vl);
   
   // zeromq will free the memory when needed by calling the free_data function
-  if( zmq_msg_init_data(&msg, packet_data, real_size, free_data, NULL) != 0 ) {
+  if( zmq_msg_init_data(&msg, send_buffer, real_size, free_data, NULL) != 0 ) {
     ERROR("zmq_msg_init : %s", zmq_strerror(errno));
     return 1;
   }
@@ -1014,7 +1016,7 @@ static int my_shutdown (void)
   if( zmq_context ) {
     
     thread_running = 0;
-    pthread_join(&listen_thread_id, NULL);
+    pthread_join(listen_thread_id, NULL);
     
     if( zmq_term(zmq_context) != 0 ) {
       ERROR("zmq_term : %s", zmq_strerror(errno));
@@ -1029,7 +1031,8 @@ void module_register (void)
 {
   plugin_register_config("zeromq", my_config, config_keys, config_keys_num);
   plugin_register_init("zeromq", plugin_init);
-  plugin_register_write("zeromq", write_value);
+  plugin_register_write("zeromq", write_value,
+      /* user_data = */ NULL);
   plugin_register_notification ("network", write_notification,
       /* user_data = */ NULL);
   plugin_register_shutdown ("zeromq", my_shutdown);
