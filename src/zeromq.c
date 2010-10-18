@@ -27,7 +27,8 @@
 #include "common.h" /* auxiliary functions */
 #include "plugin.h" /* plugin_register_*, plugin_dispatch_values */
 
-
+#include <pthread.h>
+#include <zmq.h>
 
 // copy/paste from network.c ...
 
