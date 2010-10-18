@@ -2640,12 +2640,15 @@ fi
 # }}}
 
 # --with-libzmq {{{
+with_zmq_cppflags=""
+with_zmq_ldflags=""
+with_zmq_libs="-lzmq"
 AC_ARG_WITH(libzmq, [AS_HELP_STRING([--with-libzmq@<:@=PREFIX@:>@], [Path to libzmq.])],
 [
 	if test "x$withval" != "xno" && test "x$withval" != "xyes"
 	then
-		LDFLAGS="$LDFLAGS -L$withval/lib"
-		CPPFLAGS="$CPPFLAGS -I$withval/include"
+		with_zmq_cppflags="-I$withval/include"
+		with_zmq_ldflags="-L$withval/lib"
 		with_libzmq="yes"
 	else
 		with_libzmq="$withval"
@@ -2654,6 +2657,12 @@ AC_ARG_WITH(libzmq, [AS_HELP_STRING([--with-libzmq@<:@=PREFIX@:>@], [Path to lib
 [
 	with_libzmq="yes"
 ])
+
+SAVE_CPPFLAGS="$CPPFLAGS"
+SAVE_LDFLAGS="$LDFLAGS"
+CPPFLAGS="$SAVE_CPPFLAGS $with_zmq_cppflags"
+LDFLAGS="$SAVE_LDFLAGS $with_zmq_ldflags"
+
 if test "x$with_libzmq" = "xyes"
 then
 	AC_CHECK_LIB(zmq, zmq_init,
@@ -2668,16 +2677,21 @@ then
 		AC_DEFINE(HAVE_ZMQ_H, 1, [Define to 1 if you have the <zmq.h> header file.])
 	], [with_libzmq="no (zmq.h not found)"])
 fi
+
+CPPFLAGS="$SAVE_CPPFLAGS"
+LDFLAGS="$SAVE_LDFLAGS"
+
 if test "x$with_libzmq" = "xyes"
 then
-	collect_libzmq=1
-else
-	collect_libzmq=0
+	BUILD_WITH_LIBZMQ_CPPFLAGS="$with_zmq_cppflags"
+	BUILD_WITH_LIBZMQ_LDFLAGS="$with_zmq_ldflags"
+	BUILD_WITH_LIBZMQ_LIBS="$with_zmq_libs"
+	AC_SUBST(BUILD_WITH_LIBZMQ_CPPFLAGS)
+	AC_SUBST(BUILD_WITH_LIBZMQ_LDFLAGS)
+	AC_SUBST(BUILD_WITH_LIBZMQ_LIBS)
 fi
-AC_DEFINE_UNQUOTED(COLLECT_LIBZMQ, [$collect_libzmq],
-	[Wether or not to use the ZeroMQ library])
 AM_CONDITIONAL(BUILD_WITH_LIBZMQ, test "x$with_libzmq" = "xyes")
-# }}}
+# }}} --with-libzmq
 
 # --with-libpcap {{{
 AC_ARG_WITH(libpcap, [AS_HELP_STRING([--with-libpcap@<:@=PREFIX@:>@], [Path to libpcap.])],

@@ -1,4 +1,3 @@
-#ifdef HAVE_LIBZMQ
 /**
  * collectd - src/zeromq.c
  * Copyright (C) 20010  Julien Ammous
@@ -1030,6 +1029,3 @@ void module_register (void)
       /* user_data = */ NULL);
   plugin_register_shutdown ("zeromq", my_shutdown);
 }
-
-
-#endif // HAVE_LIBZMQ
