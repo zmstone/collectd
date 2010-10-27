@@ -4560,6 +4560,33 @@ traffic (e.E<nbsp>g. due to headers and retransmission). If you want to
 collect on-wire traffic you could, for example, use the logging facilities of
 iptables to feed data for the guest IPs into the iptables plugin.
 
+=head2 Plugin C<zeromq>
+
+This plugin acts as an alternative to the network plugin (you could also use both)
+the protocol used is the same as the network plugin but it uses zeromq as the
+transport layer with can brings interesting features like:
+- reliable communication (packets can be queued until network connection is
+  available again and dropped packets will be sent again)
+- protocol choice, zeromq can use tcp, pgm, ipc an inproc, check the zeromq
+  documentation for more informations on each one
+
+Synopsis:
+
+  <Plugin zeromq>
+    SendDataTo "tcp://localhost:6666"
+    ListenOn "tcp://*:6666"
+  </Plugin>
+
+=over 4
+
+=item B<SendDataTo> I<socket>
+
+Optional socket to send data to
+
+=item B<ListenOn> I<socket>
+
+Optional socket to listen on
+
 =head2 Plugin C<write_http>
 
 This output plugin submits values to an http server by POST them using the
