@@ -141,6 +141,7 @@
 #@BUILD_PLUGIN_WRITE_HTTP_TRUE@LoadPlugin write_http
 #@BUILD_PLUGIN_WRITE_REDIS_TRUE@LoadPlugin write_redis
 #@BUILD_PLUGIN_XMMS_TRUE@LoadPlugin xmms
+#@BUILD_PLUGIN_ZEROMQ_TRUE@LoadPlugin zeromq
 #@BUILD_PLUGIN_ZFS_ARC_TRUE@LoadPlugin zfs_arc
 
 ##############################################################################
@@ -560,6 +561,13 @@
 #	# "garbage collection"
 #	CacheFlush 1800
 @LOAD_PLUGIN_NETWORK@</Plugin>
+
+# <Plugin zeromq>
+#   # send data to this socket
+#   SendDataTo "tcp://localhost:6666"
+#   # listen for data on this socket
+#   ListenOn "tcp://*:6666"
+# </Plugin>
 
 #<Plugin nginx>
 #	URL "http://localhost/status?auto"
