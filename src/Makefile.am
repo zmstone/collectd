@@ -21,7 +21,7 @@ AM_CPPFLAGS += -DPLUGINDIR='"${pkglibdir}"'
 AM_CPPFLAGS += -DPKGDATADIR='"${pkgdatadir}"'
 
 sbin_PROGRAMS = collectd collectdmon
-bin_PROGRAMS = collectd-nagios collectdctl
+bin_PROGRAMS = collectd-nagios collectdctl collectd-tg
 
 collectd_SOURCES = collectd.c collectd.h \
 		   common.c common.h \
@@ -117,11 +117,35 @@ endif
 collectdctl_LDADD += libcollectdclient/libcollectdclient.la
 collectdctl_DEPENDENCIES = libcollectdclient/libcollectdclient.la
 
+collectd_tg_SOURCES = collectd-tg.c \
+		      utils_heap.c utils_heap.h
+collectd_tg_LDADD =
+if BUILD_WITH_LIBSOCKET
+collectd_tg_LDADD += -lsocket
+endif
+if BUILD_AIX
+collectd_tg_LDADD += -lm
+endif
+collectd_tg_LDADD += libcollectdclient/libcollectdclient.la
+collectd_tg_DEPENDENCIES = libcollectdclient/libcollectdclient.la
+
 
 pkglib_LTLIBRARIES = 
 
 BUILT_SOURCES = 
 CLEANFILES = 
+
+if BUILD_PLUGIN_AMQP
+pkglib_LTLIBRARIES += amqp.la
+amqp_la_SOURCES = amqp.c \
+		  utils_cmd_putval.c utils_cmd_putval.h \
+		  utils_format_json.c utils_format_json.h
+amqp_la_LDFLAGS = -module -avoid-version $(BUILD_WITH_LIBRABBITMQ_LDFLAGS)
+amqp_la_CPPFLAGS = $(AM_CPPFLAGS) $(BUILD_WITH_LIBRABBITMQ_CPPFLAGS)
+amqp_la_LIBADD = $(BUILD_WITH_LIBRABBITMQ_LIBS)
+collectd_LDADD += "-dlopen" amqp.la
+collectd_DEPENDENCIES += amqp.la
+endif
 
 if BUILD_PLUGIN_APACHE
 pkglib_LTLIBRARIES += apache.la
@@ -510,6 +534,15 @@ logfile_la_SOURCES = logfile.c
 logfile_la_LDFLAGS = -module -avoid-version
 collectd_LDADD += "-dlopen" logfile.la
 collectd_DEPENDENCIES += logfile.la
+endif
+
+if BUILD_PLUGIN_LPAR
+pkglib_LTLIBRARIES += lpar.la
+lpar_la_SOURCES = lpar.c
+lpar_la_LDFLAGS = -module -avoid-version
+collectd_LDADD += "-dlopen" lpar.la
+collectd_DEPENDENCIES += lpar.la
+lpar_la_LIBADD = -lperfstat
 endif
 
 if BUILD_PLUGIN_MADWIFI
