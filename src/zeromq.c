@@ -52,9 +52,7 @@ static pthread_t *receive_thread_ids = NULL;
 static size_t     receive_thread_num = 0;
 static int        sending_sockets_num = 0;
 
-// private data
-static int thread_running = 1;
-static pthread_t listen_thread_id;
+static _Bool thread_running = 1;
 
 static void cmq_close_callback (void *socket) /* {{{ */
 {
@@ -496,30 +494,36 @@ static int plugin_init (void) /* {{{ */
   return 0;
 } /* }}} int plugin_init */
 
-static int my_shutdown (void) /* {{{ */
+static int cmq_shutdown (void) /* {{{ */
 {
-  if( cmq_context ) {
+  size_t i;
+
+  if (cmq_context == NULL)
+    return (0);
+
+  /* Signal thread to shut down */
+  thread_running = 0;
     
-    thread_running = 0;
+  DEBUG ("ZeroMQ plugin: Waiting for %zu receive thread(s) to shut down.",
+      receive_thread_num);
     
-    DEBUG("ZeroMQ: shutting down");
-    
-    if( zmq_term(cmq_context) != 0 ) {
-      ERROR("zmq_term : %s", zmq_strerror(errno));
-      return 1;
-    }
-    
-    pthread_join(listen_thread_id, NULL);
+  for (i = 0; i < receive_thread_num; i++)
+    pthread_join (receive_thread_ids[i], /* return ptr = */ NULL);
+
+  if (zmq_term (cmq_context) != 0)
+  {
+    ERROR ("ZeroMQ plugin: zmq_term failed: %s", zmq_strerror (errno));
+    return 1;
   }
-  
+    
   return 0;
-} /* }}} int my_shutdown */
+} /* }}} int cmq_shutdown */
 
 void module_register (void)
 {
   plugin_register_complex_config("zeromq", cmq_config);
   plugin_register_init("zeromq", plugin_init);
-  plugin_register_shutdown ("zeromq", my_shutdown);
+  plugin_register_shutdown ("zeromq", cmq_shutdown);
 }
 
 /* vim: set sw=2 sts=2 et fdm=marker : */
