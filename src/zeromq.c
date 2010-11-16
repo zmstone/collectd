@@ -75,13 +75,31 @@ static void *receive_thread (void *cmq_socket) /* {{{ */
 
   while (thread_running)
   {
+    zmq_pollitem_t pollitem;
     zmq_msg_t msg;
+
+    memset (&pollitem, 0, sizeof (pollitem));
+    pollitem.socket = cmq_socket;
+    pollitem.events = ZMQ_POLLIN;
+
+    /* Check "thread_running" at least twice times per second. */
+    status = zmq_poll (&pollitem, /* nitems = */ 1,
+        /* timeout = */ 500000 /* us */);
+    if (status < 0)
+    {
+      ERROR ("zeromq plugin: zmq_poll failed: %s", zmq_strerror (errno));
+      continue;
+    }
+    else if (status == 0) /* timeout */
+      continue;
 
     (void) zmq_msg_init (&msg);
 
     status = zmq_recv (cmq_socket, &msg, /* flags = */ 0);
     if (status != 0)
     {
+      (void) zmq_msg_close (&msg);
+
       if ((errno == EAGAIN) || (errno == EINTR))
         continue;
 
