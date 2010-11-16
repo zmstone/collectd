@@ -110,7 +110,8 @@ static void *receive_thread (void *cmq_socket) /* {{{ */
 
 #define PACKET_SIZE   512
 
-static int write_notification (const notification_t *n, user_data_t __attribute__((unused)) *user_data)
+static int write_notification (const notification_t *n, /* {{{ */
+    __attribute__((unused)) user_data_t *user_data)
 {
   char        buffer[PACKET_SIZE];
   char       *buffer_ptr = buffer;
@@ -190,7 +191,7 @@ static int write_notification (const notification_t *n, user_data_t __attribute_
   }
   
   return 0;
-}
+} /* }}} int write_notification */
 
 static int write_value (const data_set_t *ds, /* {{{ */
     const value_list_t *vl,
@@ -487,15 +488,15 @@ static int cmq_config (oconfig_item_t *ci) /* {{{ */
   return (0);
 } /* }}} int cmq_config */
 
-static int plugin_init (void)
+static int plugin_init (void) /* {{{ */
 {
   int major, minor, patch;
   zmq_version (&major, &minor, &patch);
   INFO("ZeroMQ plugin loaded (zeromq v%d.%d.%d).", major, minor, patch);
   return 0;
-}
+} /* }}} int plugin_init */
 
-static int my_shutdown (void)
+static int my_shutdown (void) /* {{{ */
 {
   if( cmq_context ) {
     
@@ -512,7 +513,7 @@ static int my_shutdown (void)
   }
   
   return 0;
-}
+} /* }}} int my_shutdown */
 
 void module_register (void)
 {
@@ -521,3 +522,4 @@ void module_register (void)
   plugin_register_shutdown ("zeromq", my_shutdown);
 }
 
+/* vim: set sw=2 sts=2 et fdm=marker : */
