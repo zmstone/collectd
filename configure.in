@@ -2319,6 +2319,76 @@ fi
 AM_CONDITIONAL(BUILD_WITH_LIBMONGOC, test "x$with_libmongoc" = "xyes")
 # }}}
 
+# --with-libmono {{{
+AC_ARG_VAR([LIBMONO_PKG_CONFIG_NAME], [Name of libmono used by pkg-config])
+if test "x$LIBMONO_PKG_CONFIG_NAME" = "x"
+then
+	LIBMONO_PKG_CONFIG_NAME="mono"
+fi
+
+AC_MSG_CHECKING([pkg-config for $LIBMONO_PKG_CONFIG_NAME])
+$PKG_CONFIG --exists "$LIBMONO_PKG_CONFIG_NAME" 2>/dev/null
+mono_config_status=$?
+if test "x$mono_config_status" = "x0"
+then
+	with_libmono="yes"
+else
+	with_libmono="no"
+fi
+AC_MSG_RESULT([$with_libmono])
+
+if test "x$with_libmono" = "xyes"
+then
+	with_libmono_cppflags=`$PKG_CONFIG --cflags-only-I "$LIBMONO_PKG_CONFIG_NAME"` || with_libmono="no"
+	with_libmono_cflags=`$PKG_CONFIG --cflags-only-other "$LIBMONO_PKG_CONFIG_NAME"` || with_libmono="no"
+	with_libmono_ldflags=`$PKG_CONFIG --libs-only-L "$LIBMONO_PKG_CONFIG_NAME"` || with_libmono="no"
+	with_libmono_libs=`$PKG_CONFIG --libs-only-l "$LIBMONO_PKG_CONFIG_NAME"` || with_libmono="no"
+fi
+
+if test "x$with_libmono" = "xyes"
+then
+	SAVE_CPPFLAGS="$CPPFLAGS"
+	SAVE_CFLAGS="$CFLAGS"
+	CPPFLAGS="$CPPFLAGS $with_libmono_cppflags"
+	CFLAGS="$CFLAGS $with_libmono_cflags"
+
+	AC_CHECK_HEADERS(mono/jit/jit.h mono/metadata/object.h,,
+			 [with_libmono="no (missing header file)"])
+
+
+	CPPFLAGS="$SAVE_CPPFLAGS"
+	CFLAGS="$SAVE_CFLAGS"
+fi
+
+if test "x$with_libmono" = "xyes"
+then
+	SAVE_LDFLAGS="$LDFLAGS"
+	SAVE_LIBS="$LIBS"
+	LDFLAGS="$LDFLAGS $with_libmono_ldflags"
+	LIBS="$LIBS $with_libmono_libs"
+
+	AC_CHECK_FUNC(mono_domain_assembly_open,
+		      [with_libmono="yes"],
+		      [with_libmono="no (symbol 'mono_domain_assembly_open' not found)"])
+
+	LDFLAGS="$SAVE_LDFLAGS"
+	LIBS="$SAVE_LIBS"
+fi
+
+if test "x$with_libmono" = "xyes"
+then
+	BUILD_WITH_LIBMONO_CPPFLAGS="$with_libmono_cppflags"
+	BUILD_WITH_LIBMONO_CFLAGS="$with_libmono_cflags"
+	BUILD_WITH_LIBMONO_LDFLAGS="$with_libmono_ldflags"
+	BUILD_WITH_LIBMONO_LIBS="$with_libmono_libs"
+	AC_SUBST(BUILD_WITH_LIBMONO_CPPFLAGS)
+	AC_SUBST(BUILD_WITH_LIBMONO_CFLAGS)
+	AC_SUBST(BUILD_WITH_LIBMONO_LDFLAGS)
+	AC_SUBST(BUILD_WITH_LIBMONO_LIBS)
+fi
+AM_CONDITIONAL(BUILD_WITH_LIBMONO, test "x$with_libmono" = "xyes")
+# }}}
+
 # --with-libmysql {{{
 with_mysql_config="mysql_config"
 with_mysql_cflags=""
