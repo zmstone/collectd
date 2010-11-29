@@ -33,7 +33,79 @@
 #include <mono/jit/jit.h>
 #include <mono/metadata/assembly.h>
 
+struct dotnet_callback_info_s
+{
+  gint32 domain_id;
+  guint32 obj_handle;
+};
+typedef struct dotnet_callback_info_s dotnet_callback_info_t;
+
 static MonoDomain *domain = NULL;
+
+static int dotnet_read (user_data_t *ud) /* {{{ */
+{
+  dotnet_callback_info_t *ci = ud->data;
+  MonoClass  *class;
+  MonoObject *object;
+  MonoMethod *method;
+  MonoObject *ret;
+
+#if 0
+  MonoDomain *domain;
+  DEBUG ("dotnet plugin: mono_domain_get_by_id (%"PRIi32") ...",
+      (int32_t) ci->domain_id);
+  domain = mono_domain_get_by_id (ci->domain_id);
+  if (domain == NULL)
+  {
+    ERROR ("dotnet plugin: mono_domain_get_by_id failed.");
+    return (-1);
+  }
+  mono_domain_set_internal (domain);
+#endif
+
+  DEBUG ("dotnet plugin: mono_gchandle_get_target ...");
+  object = mono_gchandle_get_target (ci->obj_handle);
+  if (object == NULL)
+  {
+    ERROR ("dotnet plugin: mono_gchandle_get_target failed.");
+    return (-1);
+  }
+
+  DEBUG ("dotnet plugin: mono_object_get_class ...");
+  class = mono_object_get_class (object);
+  if (class == NULL)
+  {
+    ERROR ("dotnet plugin: mono_object_get_class failed.");
+    return (-1);
+  }
+
+  DEBUG ("dotnet plugin: mono_class_get_method_from_name ...");
+  method = mono_class_get_method_from_name (class,
+      /* name = */ "read", /* nargs = */ 0);
+  if (method == NULL)
+  {
+    ERROR ("dotnet plugin: mono_class_get_method_from_name failed.");
+    return (-1);
+  }
+
+  DEBUG ("dotnet plugin: mono_runtime_invoke ...");
+  ret = mono_runtime_invoke (method, object, /* params = */ NULL,
+      /* exception ptr = */ NULL);
+  DEBUG ("dotnet plugin: mono_runtime_invoke returned %p.", (void *) ret);
+
+  return (0);
+} /* }}} int dotnet_read */
+
+static void dotnet_callback_info_free (void *ptr) /* {{{ */
+{
+  dotnet_callback_info_t *ci = ptr;
+
+  if (ci == NULL)
+    return;
+
+  mono_gchandle_free (ci->obj_handle);
+  sfree (ci);
+} /* }}} void dotnet_callback_info_free */
 
 static int dotnet_log (int severity, MonoString *message) /* {{{ */
 {
@@ -46,24 +118,48 @@ static int dotnet_log (int severity, MonoString *message) /* {{{ */
 
 static int dotnet_register_read (MonoString *name, MonoObject *obj) /* {{{ */
 {
-  char *name_utf8 = mono_string_to_utf8 (name);
+  user_data_t ud;
+  dotnet_callback_info_t *ci;
+
   MonoClass *class;
   MonoMethod *method;
 
-  DEBUG ("dotnet_register_read: name = \"%s\";", name_utf8);
-
+  /* Sanity checks: Make sure this object actually has the required method. */
   class = mono_object_get_class (obj);
-
-  method = mono_class_get_method_from_name (mono_object_get_class (obj),
-      /* name = */ "read", /* param count = */ 0);
-  if (method == NULL)
+  if (class == NULL)
   {
-    ERROR ("dotnet_register_read: Can't find method read():int.");
+    ERROR ("dotnet plugin: mono_object_get_class failed.");
     return (-1);
   }
 
-  DEBUG ("dotnet_register_read: Class %s successfully registered.",
-      mono_class_get_name (class));
+  method = mono_class_get_method_from_name (class,
+      /* name = */ "read", /* param count = */ 0);
+  if (method == NULL)
+  {
+    ERROR ("dotnet plugin: mono_class_get_method_from_name failed.");
+    return (-1);
+  }
+
+  ci = malloc (sizeof (*ci));
+  if (ci == NULL)
+  {
+    ERROR ("dotnet plugin: malloc failed.");
+    return (-1);
+  }
+  memset (ci, 0, sizeof (*ci));
+
+  ci->domain_id = mono_domain_get_id (mono_domain_get ());
+  ci->obj_handle = mono_gchandle_new (obj, /* pinned = */ 1);
+
+  ud.data = ci;
+  ud.free_func = dotnet_callback_info_free;
+
+  plugin_register_complex_read (/* group = */ "dotnet",
+      /* name      = */ mono_string_to_utf8 (name),
+      /* callback  = */ dotnet_read,
+      /* interval  = */ NULL,
+      /* user data = */ &ud);
+
   return (0);
 } /* }}} int dotnet_register_read */
 
@@ -75,11 +171,22 @@ static int dotnet_load_class (const char *assembly_name, /* {{{ */
   MonoClass *class;
   MonoObject *obj;
 
+#if 0
+  MonoDomain *domain;
+  domain = mono_domain_get ();
+  if (domain == NULL)
+  {
+    ERROR ("dotnet plugin: mono_domain_get failed.");
+    return (-1);
+  }
+#endif
+
   assembly = mono_domain_assembly_open (domain, assembly_name);
   if (assembly == NULL)
   {
     ERROR ("dotnet plugin: mono_domain_assembly_open (\"%s\") failed.",
-        assembly_name);
+      assembly_name);
+    mono_jit_cleanup (domain);
     return (-1);
   }
 
