@@ -4863,6 +4863,7 @@ AC_PLUGIN([dbi],         [$with_libdbi],       [General database statistics])
 AC_PLUGIN([df],          [$plugin_df],         [Filesystem usage statistics])
 AC_PLUGIN([disk],        [$plugin_disk],       [Disk usage statistics])
 AC_PLUGIN([dns],         [$with_libpcap],      [DNS traffic analysis])
+AC_PLUGIN([dotnet],      [$with_libmono],      [.NET language bindings])
 AC_PLUGIN([email],       [yes],                [EMail statistics])
 AC_PLUGIN([entropy],     [$plugin_entropy],    [Entropy statistics])
 AC_PLUGIN([ethstat],     [$plugin_ethstat],    [Stats from NIC driver])
@@ -5138,6 +5139,7 @@ Configuration:
     libkvm  . . . . . . . $with_libkvm
     libmemcached  . . . . $with_libmemcached
     libmodbus . . . . . . $with_libmodbus
+    libmono . . . . . . . $with_libmono
     libmysql  . . . . . . $with_libmysql
     libnetapp . . . . . . $with_libnetapp
     libnetlink  . . . . . $with_libnetlink
@@ -5195,6 +5197,7 @@ Configuration:
     df  . . . . . . . . . $enable_df
     disk  . . . . . . . . $enable_disk
     dns . . . . . . . . . $enable_dns
+    dotnet  . . . . . . . $enable_dotnet
     email . . . . . . . . $enable_email
     entropy . . . . . . . $enable_entropy
     ethstat . . . . . . . $enable_ethstat

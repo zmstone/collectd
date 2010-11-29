@@ -350,6 +350,17 @@ collectd_LDADD += "-dlopen" dns.la
 collectd_DEPENDENCIES += dns.la
 endif
 
+if BUILD_PLUGIN_DOTNET
+pkglib_LTLIBRARIES += dotnet.la
+dotnet_la_SOURCES = dotnet.c
+dotnet_la_CPPFLAGS = $(AM_CPPFLAGS) $(BUILD_WITH_LIBMONO_CPPFLAGS)
+#dotnet_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_LIBMONO_CFLAGS)
+dotnet_la_LDFLAGS = -module -avoid-version $(BUILD_WITH_LIBMONO_LDFLAGS)
+dotnet_la_LIBADD = $(BUILD_WITH_LIBMONO_LIBS)
+collectd_LDADD += "-dlopen" dotnet.la
+collectd_DEPENDENCIES += dotnet.la
+endif
+
 if BUILD_PLUGIN_EMAIL
 pkglib_LTLIBRARIES += email.la
 email_la_SOURCES = email.c
