@@ -41,21 +41,18 @@ struct dotnet_callback_info_s
 };
 typedef struct dotnet_callback_info_s dotnet_callback_info_t;
 
-static MonoDomain *domain = NULL;
+static MonoDomain *_domain = NULL;
 
 static int dotnet_read (user_data_t *ud) /* {{{ */
 {
   dotnet_callback_info_t *ci = ud->data;
+  MonoDomain *domain;
+  MonoThread *thread;
   MonoClass  *class;
   MonoObject *object;
   MonoMethod *method;
   MonoObject *ret;
-  MonoThread *thread;
 
-  thread = mono_thread_attach (domain);
-
-#if 0
-  MonoDomain *domain;
   DEBUG ("dotnet plugin: mono_domain_get_by_id (%"PRIi32") ...",
       (int32_t) ci->domain_id);
   domain = mono_domain_get_by_id (ci->domain_id);
@@ -64,8 +61,19 @@ static int dotnet_read (user_data_t *ud) /* {{{ */
     ERROR ("dotnet plugin: mono_domain_get_by_id failed.");
     return (-1);
   }
-  mono_domain_set_internal (domain);
-#endif
+
+  thread = mono_thread_attach (domain);
+  if (thread == NULL)
+  {
+    ERROR ("dotnet plugin: mono_thread_attach failed.");
+    return (-1);
+  }
+
+  if (!mono_domain_set (domain, /* force = */ 0))
+  {
+    ERROR ("dotnet plugin: mono_domain_set failed.");
+    return (-1);
+  }
 
   DEBUG ("dotnet plugin: mono_gchandle_get_target ...");
   object = mono_gchandle_get_target (ci->obj_handle);
@@ -174,35 +182,52 @@ static int dotnet_register_read (MonoString *name, MonoObject *obj) /* {{{ */
 static int dotnet_load_class (const char *assembly_name, /* {{{ */
     const char *name_space, const char *class_name)
 {
+  MonoDomain *domain;
+  MonoThread *thread;
   MonoAssembly *assembly;
   MonoImage *image;
   MonoClass *class;
   MonoObject *obj;
 
-#if 0
-  MonoDomain *domain;
-  domain = mono_domain_get ();
+  domain = mono_domain_create ();
   if (domain == NULL)
   {
-    ERROR ("dotnet plugin: mono_domain_get failed.");
+    ERROR ("dotnet plugin: mono_domain_create failed.");
     return (-1);
   }
-#endif
+
+  thread = mono_thread_attach (domain);
+  if (thread == NULL)
+  {
+    ERROR ("dotnet plugin: mono_thread_attach failed.");
+    mono_domain_free (domain, /* force = */ 0);
+    return (-1);
+  }
+
+  if (!mono_domain_set (domain, /* force = */ 0))
+  {
+    ERROR ("dotnet plugin: mono_domain_set failed.");
+    mono_thread_detach (thread);
+    mono_domain_free (domain, /* force = */ 0);
+    return (-1);
+  }
 
   assembly = mono_domain_assembly_open (domain, assembly_name);
   if (assembly == NULL)
   {
     ERROR ("dotnet plugin: mono_domain_assembly_open (\"%s\") failed.",
       assembly_name);
-    mono_jit_cleanup (domain);
+    mono_thread_detach (thread);
+    mono_domain_free (domain, /* force = */ 0);
     return (-1);
   }
 
   image = mono_assembly_get_image (assembly);
   if (image == NULL)
   {
-    ERROR ("mono_assembly_get_image failed.");
-    mono_jit_cleanup (domain);
+    ERROR ("dotnet plugin: mono_assembly_get_image failed.");
+    mono_thread_detach (thread);
+    mono_domain_free (domain, /* force = */ 0);
     return (-1);
   }
 
@@ -213,13 +238,17 @@ static int dotnet_load_class (const char *assembly_name, /* {{{ */
   {
     ERROR ("dotnet plugin: Looking up class \"%s\" in assembly \"%s\" failed.",
         class_name, assembly_name);
+    mono_thread_detach (thread);
+    mono_domain_free (domain, /* force = */ 0);
     return (-1);
   }
 
   obj = mono_object_new (domain, class);
   if (obj == NULL)
   {
-    ERROR ("Creating a \"%s\" object failed.", class_name);
+    ERROR ("dotnet plugin: Creating a \"%s\" object failed.", class_name);
+    mono_thread_detach (thread);
+    mono_domain_free (domain, /* force = */ 0);
     return (-1);
   }
 
@@ -227,6 +256,7 @@ static int dotnet_load_class (const char *assembly_name, /* {{{ */
 
   DEBUG ("dotnet plugin: Successfully created a \"%s\" object.", class_name);
 
+  mono_thread_detach (thread);
   return (0);
 } /* }}} int dotnet_load_class */
 
@@ -303,8 +333,8 @@ static int dotnet_config (oconfig_item_t *ci) /* {{{ */
 
 void module_register (void)
 {
-  domain = mono_jit_init (PACKAGE_NAME);
-  if (domain == NULL)
+  _domain = mono_jit_init (PACKAGE_NAME);
+  if (_domain == NULL)
   {
     ERROR ("dotnet plugin: mono_jit_init failed.");
     return;
