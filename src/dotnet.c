@@ -32,6 +32,7 @@
 #include <glib.h>
 #include <mono/jit/jit.h>
 #include <mono/metadata/assembly.h>
+#include <mono/metadata/threads.h>
 
 struct dotnet_callback_info_s
 {
@@ -49,6 +50,9 @@ static int dotnet_read (user_data_t *ud) /* {{{ */
   MonoObject *object;
   MonoMethod *method;
   MonoObject *ret;
+  MonoThread *thread;
+
+  thread = mono_thread_attach (domain);
 
 #if 0
   MonoDomain *domain;
@@ -68,6 +72,7 @@ static int dotnet_read (user_data_t *ud) /* {{{ */
   if (object == NULL)
   {
     ERROR ("dotnet plugin: mono_gchandle_get_target failed.");
+    mono_thread_detach (thread);
     return (-1);
   }
 
@@ -76,6 +81,7 @@ static int dotnet_read (user_data_t *ud) /* {{{ */
   if (class == NULL)
   {
     ERROR ("dotnet plugin: mono_object_get_class failed.");
+    mono_thread_detach (thread);
     return (-1);
   }
 
@@ -85,6 +91,7 @@ static int dotnet_read (user_data_t *ud) /* {{{ */
   if (method == NULL)
   {
     ERROR ("dotnet plugin: mono_class_get_method_from_name failed.");
+    mono_thread_detach (thread);
     return (-1);
   }
 
@@ -93,6 +100,7 @@ static int dotnet_read (user_data_t *ud) /* {{{ */
       /* exception ptr = */ NULL);
   DEBUG ("dotnet plugin: mono_runtime_invoke returned %p.", (void *) ret);
 
+  mono_thread_detach (thread);
   return (0);
 } /* }}} int dotnet_read */
 
