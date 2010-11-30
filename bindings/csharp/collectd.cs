@@ -95,43 +95,43 @@ namespace CollectdAPI
       this._typeInstance = typeInstance;
     } /* Identifier() */
 
-    string getHost           () { return (this._host);           }
-    string getPlugin         () { return (this._plugin);         }
-    string getPluginInstance () { return (this._pluginInstance); }
-    string getType           () { return (this._type);           }
-    string getTypeInstance   () { return (this._typeInstance);   }
+    public string getHost           () { return (this._host);           }
+    public string getPlugin         () { return (this._plugin);         }
+    public string getPluginInstance () { return (this._pluginInstance); }
+    public string getType           () { return (this._type);           }
+    public string getTypeInstance   () { return (this._typeInstance);   }
 
-    void setHost           (string s) { this._host           = s; }
-    void setPlugin         (string s) { this._plugin         = s; }
-    void setPluginInstance (string s) { this._pluginInstance = s; }
-    void setType           (string s) { this._type           = s; }
-    void setTypeInstance   (string s) { this._typeInstance   = s; }
+    public void setHost           (string s) { this._host           = s; }
+    public void setPlugin         (string s) { this._plugin         = s; }
+    public void setPluginInstance (string s) { this._pluginInstance = s; }
+    public void setType           (string s) { this._type           = s; }
+    public void setTypeInstance   (string s) { this._typeInstance   = s; }
   } /* }}} class Identifier */
 
   public class ValueList: Identifier /* {{{ */
   {
     protected double _time;
     protected double _interval;
-    protected ArrayList  _values;
+    protected IList  _values;
     
     public ValueList (string host,
         string plugin, string pluginInstance,
         string type, string typeInstance)
       :base (host, plugin, pluginInstance, type, typeInstance)
     {
-      this._time = 0.0;
       this._interval = 10.0;
       this._values = new ArrayList ();
+      this.setTime (DateTime.Now);
     }
 
-    public ArrayList getValues ()
+    public IList getValues ()
     {
       return (this._values);
     }
 
-    public void setValues (ArrayList values)
+    public void setValues (IList values)
     {
-      this._values = values;
+      this._values = new ArrayList (values);
     }
 
     public void addValue (Value v)
@@ -153,6 +153,25 @@ namespace CollectdAPI
     {
       if (interval > 0.0)
         this._interval = interval;
+    }
+
+    public double getTime ()
+    {
+      return (this._time);
+    }
+
+    public void setTime (DateTime dt)
+    {
+      DateTime dtBase = new DateTime (1970,1,1,0,0,0);
+      TimeSpan tsDiff = dt.ToUniversalTime () - dtBase;
+
+      this._time = (double) tsDiff.TotalSeconds;
+    }
+
+    public void setTime (double t)
+    {
+      if (t > 0.0)
+        this._time = t;
     }
   } /* }}} class ValueList */
 }
