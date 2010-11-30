@@ -123,6 +123,230 @@ static void dotnet_callback_info_free (void *ptr) /* {{{ */
   sfree (ci);
 } /* }}} void dotnet_callback_info_free */
 
+static MonoMethod *dotnet_object_method_get_from_name (MonoObject *object, /* {{{ */
+    const char *name, int param_count)
+{
+  MonoClass *class;
+
+  class = mono_object_get_class (object);
+  if (class == NULL)
+    return (NULL);
+
+  while (42)
+  {
+    MonoClass *pclass;
+    MonoMethod *method;
+
+    method = mono_class_get_method_from_name (class, name, param_count);
+    if (method != NULL)
+      return (method);
+
+    pclass = mono_class_get_parent (class);
+    if ((pclass == NULL) || (pclass == class))
+    {
+      ERROR ("dotnet plugin: Unable to find method \"%s\" in class \"%s\".",
+          name, mono_class_get_name (mono_object_get_class (object)));
+      return (NULL);
+    }
+    class = pclass;
+  } /* while (42) */
+  /* Not reached */
+  return (NULL);
+} /* }}} MonoMethod *dotnet_object_method_get_from_name */
+
+static MonoProperty *dotnet_object_get_property_from_name (MonoObject *object, /* {{{ */
+    const char *name)
+{
+  MonoClass *class;
+
+  class = mono_object_get_class (object);
+
+  while (42)
+  {
+    MonoClass *pclass;
+    MonoProperty *prop;
+
+    prop = mono_class_get_property_from_name (class, name);
+    if (prop != NULL)
+      return (prop);
+
+    pclass = mono_class_get_parent (class);
+    if ((pclass == NULL) || (pclass == class))
+    {
+      ERROR ("dotnet plugin: Unable to find property \"%s\" in class \"%s\".",
+          name, mono_class_get_name (mono_object_get_class (object)));
+      return (NULL);
+    }
+    class = pclass;
+  } /* while (42) */
+  /* Not reached */
+  return (NULL);
+} /* }}} MonoProperty *dotnet_object_get_property_from_name */
+
+static int dotnet_object_method_get_string (MonoObject *obj, /* {{{ */
+    const char *method_name, char *buffer, size_t buffer_size)
+{
+  MonoMethod *method;
+  MonoObject *ret;
+  char *tmp;
+
+  method = dotnet_object_method_get_from_name (obj, method_name, /* nargs = */ 0);
+  if (method == NULL)
+    return (-1);
+
+  ret = mono_runtime_invoke (method, obj, /* params = */ NULL, /* exception = */ NULL);
+  if (ret == NULL)
+    return (-2);
+
+  tmp = mono_string_to_utf8 ((MonoString *) ret);
+  if (tmp == NULL)
+  {
+    ERROR ("dotnet plugin: mono_string_to_utf8 failed.");
+    return (-3);
+  }
+  DEBUG ("dotnet plugin: Method \"%s\" returned string \"%s\".",
+      mono_method_get_name (method), tmp);
+
+  sstrncpy (buffer, tmp, buffer_size);
+  return (0);
+} /* }}} int dotnet_object_method_get_string */
+
+static int dotnet_object_method_get_cdtime (MonoObject *obj, /* {{{ */
+    const char *method_name, cdtime_t *ret_value)
+{
+  MonoMethod *method;
+  MonoObject *ret_obj;
+  double tmp;
+
+  method = dotnet_object_method_get_from_name (obj, method_name, /* nargs = */ 0);
+  if (method == NULL)
+    return (-1);
+
+  ret_obj = mono_runtime_invoke (method, obj, /* params = */ NULL, /* exception = */ NULL);
+  if (ret_obj == NULL)
+    return (-2);
+
+  tmp = *((double *) mono_object_unbox (ret_obj));
+  DEBUG ("dotnet plugin: Method \"%s\" returned value %.3f.",
+      mono_method_get_name (method), tmp);
+  *ret_value = DOUBLE_TO_CDTIME_T (tmp);
+
+  return (0);
+} /* }}} int dotnet_object_method_get_cdtime */
+
+static int dotnet_object_method_get_values (MonoObject *obj, /* {{{ */
+    value_list_t *vl)
+{
+  MonoMethod *method;
+  MonoObject *ilist_obj;
+  MonoObject *tmp_obj;
+  MonoProperty *count_prop;
+  MonoProperty *item_prop;
+  int32_t i;
+
+  method = dotnet_object_method_get_from_name (obj, "getValues", /* nargs = */ 0);
+  if (method == NULL)
+    return (-1);
+
+  ilist_obj = mono_runtime_invoke (method, obj, /* params = */ NULL, /* exception = */ NULL);
+  if (ilist_obj == NULL)
+    return (-2);
+
+  count_prop = dotnet_object_get_property_from_name (ilist_obj, "Count");
+  if (count_prop == NULL)
+  {
+    ERROR ("dotnet plugin: dotnet_object_get_property_from_name (\"Count\") failed.");
+    return (-4);
+  }
+
+  item_prop = dotnet_object_get_property_from_name (ilist_obj, "Item");
+  if (item_prop == NULL)
+  {
+    ERROR ("dotnet plugin: dotnet_object_get_property_from_name (\"Item\") failed.");
+    return (-5);
+  }
+
+  method = mono_property_get_get_method (count_prop);
+  tmp_obj = mono_runtime_invoke (method, ilist_obj, /* params = */ NULL, /* exception = */ NULL);
+  if (tmp_obj == NULL)
+  {
+    ERROR ("dotnet plugin: mono_runtime_invoke failed.");
+    return (-6);
+  }
+  DEBUG ("dotnet plugin: Type of the Count property is \"%s\".",
+      mono_class_get_name (mono_object_get_class (tmp_obj)));
+
+  vl->values_len = (int) *((int32_t *) mono_object_unbox (tmp_obj));
+  DEBUG ("dotnet plugin: vl->values_len = %i;", vl->values_len);
+
+  if (vl->values_len <= 0)
+  {
+    vl->values_len = 0;
+    return (-7);
+  }
+
+  vl->values = calloc ((size_t) vl->values_len, sizeof (*vl->values));
+  if (vl->values == NULL)
+  {
+    vl->values_len = 0;
+    return (-8);
+  }
+
+  for (i = 0; i < ((int32_t) vl->values_len); i++)
+  {
+    void *args[2] = { &i, NULL };
+    MonoObject *value_obj;
+    const char *class_name;
+
+    method = mono_property_get_get_method (item_prop);
+    value_obj = mono_runtime_invoke (method, ilist_obj, /* params = */ args, /* exception = */ NULL);
+    if (value_obj == NULL)
+    {
+      ERROR ("dotnet plugin: Item(%i) failed.", i);
+      return (-7);
+    }
+
+    class_name = mono_class_get_name (mono_object_get_class (value_obj));
+    if (strcmp ("gaugeValue", class_name) == 0)
+    {
+      MonoObject *gauge_obj;
+
+      method = dotnet_object_method_get_from_name (value_obj, "toDouble", /* nargs = */ 0);
+      if (method == NULL)
+        return (-9);
+
+      gauge_obj = mono_runtime_invoke (method, value_obj, /* args = */ NULL, /* exception = */ NULL);
+      if (gauge_obj == NULL)
+        return (-10);
+
+      vl->values[i].gauge = (gauge_t) *((double *) mono_object_unbox (gauge_obj));
+      DEBUG ("dotnet plugin: Gauge value %"PRIi32" = %g;",
+          i, vl->values[i].gauge);
+    }
+    else if (strcmp ("deriveValue", class_name) == 0)
+    {
+      MonoObject *derive_obj;
+
+      method = dotnet_object_method_get_from_name (value_obj, "toLong", /* nargs = */ 0);
+      if (method == NULL)
+        return (-9);
+
+      derive_obj = mono_runtime_invoke (method, value_obj, /* args = */ NULL, /* exception = */ NULL);
+      if (derive_obj == NULL)
+        return (-10);
+
+      vl->values[i].derive = (derive_t) *((int64_t *) mono_object_unbox (derive_obj));
+      DEBUG ("dotnet plugin: Derive value %"PRIi32" = %"PRIi64";",
+          i, vl->values[i].derive);
+    }
+  }
+
+  return (0);
+} /* }}} int dotnet_object_method_get_values */
+
+/*
+ * Functions exposed to .Net
+ */
 static int dotnet_log (int severity, MonoString *message) /* {{{ */
 {
   char *tmp = mono_string_to_utf8 (message);
@@ -179,6 +403,52 @@ static int dotnet_register_read (MonoString *name, MonoObject *obj) /* {{{ */
   return (0);
 } /* }}} int dotnet_register_read */
 
+static int dotnet_dispatch_values (MonoObject *obj) /* {{{ */
+{
+  value_list_t vl = VALUE_LIST_INIT;
+  int status;
+
+  status = dotnet_object_method_get_string (obj, "getHost", vl.host, sizeof (vl.host));
+  if (status != 0)
+    return (status);
+
+  status = dotnet_object_method_get_string (obj, "getPlugin", vl.plugin, sizeof (vl.plugin));
+  if (status != 0)
+    return (status);
+
+  status = dotnet_object_method_get_string (obj, "getPluginInstance", vl.plugin_instance, sizeof (vl.plugin_instance));
+  if (status != 0)
+    return (status);
+
+  status = dotnet_object_method_get_string (obj, "getType", vl.type, sizeof (vl.type));
+  if (status != 0)
+    return (status);
+
+  status = dotnet_object_method_get_string (obj, "getTypeInstance", vl.type_instance, sizeof (vl.type_instance));
+  if (status != 0)
+    return (status);
+
+  status = dotnet_object_method_get_cdtime (obj, "getInterval", &vl.interval);
+  if (status != 0)
+    return (status);
+
+  status = dotnet_object_method_get_cdtime (obj, "getTime", &vl.time);
+  if (status != 0)
+    return (status);
+
+  status = dotnet_object_method_get_values (obj, &vl);
+  if (status != 0)
+    return (status);
+
+  status = plugin_dispatch_values (&vl);
+  sfree (vl.values);
+
+  return (status);
+} /* }}} int dotnet_dispatch_values */
+
+/*
+ * Initialization functions
+ */
 static int dotnet_load_class (const char *assembly_name, /* {{{ */
     const char *name_space, const char *class_name)
 {
@@ -342,6 +612,7 @@ void module_register (void)
 
   mono_add_internal_call ("CollectdAPI.Collectd::log", dotnet_log);
   mono_add_internal_call ("CollectdAPI.Collectd::registerRead", dotnet_register_read);
+  mono_add_internal_call ("CollectdAPI.Collectd::dispatchValues", dotnet_dispatch_values);
 
   plugin_register_complex_config ("dotnet", dotnet_config);
 } /* void module_register */

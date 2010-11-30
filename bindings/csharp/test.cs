@@ -15,8 +15,10 @@ public class EmbedTest: IRead
 		vl.setInterval (10.0);
 		vl.addValue (new gaugeValue (3.1337));
 
-		System.Console.WriteLine ("EmbedTest::read ();");
-		Collectd.log (42, "Hello World!");
+		System.Console.WriteLine ("vl.getHost () = "
+				+ vl.getHost ());
+
+		Collectd.dispatchValues (vl);
 		return (0);
 	}
 

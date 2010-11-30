@@ -42,6 +42,9 @@ namespace CollectdAPI
 
     [MethodImplAttribute(MethodImplOptions.InternalCall)]
       public extern static int registerRead (string name, IRead obj);
+
+    [MethodImplAttribute(MethodImplOptions.InternalCall)]
+      public extern static int dispatchValues (ValueList vl);
   } /* }}} class Collectd */
 
   public abstract class Value /* {{{ */
