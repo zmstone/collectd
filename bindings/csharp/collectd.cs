@@ -26,6 +26,7 @@
 
 using System;
 using System.Collections;
+using System.Text;
 using System.Runtime.CompilerServices;
 
 namespace CollectdAPI
@@ -64,6 +65,11 @@ namespace CollectdAPI
 
     public override long toLong () { return ((long) this._value); }
     public override double toDouble () { return (this._value); }
+
+    public override string ToString ()
+    {
+      return (this._value.ToString ());
+    }
   } /* }}} class gaugeValue */
 
   public class deriveValue: Value /* {{{ */
@@ -77,6 +83,11 @@ namespace CollectdAPI
 
     public override long toLong () { return (this._value); }
     public override double toDouble () { return ((double) this._value); }
+
+    public override string ToString ()
+    {
+      return (this._value.ToString ());
+    }
   } /* }}} class deriveValue */
 
   public class Identifier /* {{{ */
@@ -98,6 +109,15 @@ namespace CollectdAPI
       this._typeInstance = typeInstance;
     } /* Identifier() */
 
+    public Identifier (Identifier id)
+    {
+      this._host           = id._host;
+      this._plugin         = id._plugin;
+      this._pluginInstance = id._pluginInstance;
+      this._type           = id._type;
+      this._typeInstance   = id._typeInstance;
+    } /* Identifier() */
+
     public string getHost           () { return (this._host);           }
     public string getPlugin         () { return (this._plugin);         }
     public string getPluginInstance () { return (this._pluginInstance); }
@@ -109,6 +129,20 @@ namespace CollectdAPI
     public void setPluginInstance (string s) { this._pluginInstance = s; }
     public void setType           (string s) { this._type           = s; }
     public void setTypeInstance   (string s) { this._typeInstance   = s; }
+
+    public override string ToString ()
+    {
+      StringBuilder sb = new StringBuilder ();
+
+      sb.Append (this._host).Append ("/").Append (this._plugin);
+      if (!String.Equals ("", this._pluginInstance))
+        sb.Append ("-").Append (this._pluginInstance);
+      sb.Append ("/").Append (this._type);
+      if (!String.Equals ("", this._typeInstance))
+        sb.Append ("-").Append (this._typeInstance);
+
+      return (sb.ToString ());
+    } /* string ToString */
   } /* }}} class Identifier */
 
   public class ValueList: Identifier /* {{{ */
@@ -125,6 +159,14 @@ namespace CollectdAPI
       this._interval = 10.0;
       this._values = new ArrayList ();
       this.setTime (DateTime.Now);
+    }
+
+    public ValueList (ValueList vl)
+      :base (vl)
+    {
+      this._interval = vl._interval;
+      this._values   = new ArrayList (vl._values);
+      this._time     = vl._time;
     }
 
     public IList getValues ()
@@ -176,6 +218,26 @@ namespace CollectdAPI
       if (t > 0.0)
         this._time = t;
     }
+
+    public override string ToString ()
+    {
+      StringBuilder sb = new StringBuilder ("{");
+
+      sb.Append ("\"identifier\":\"").Append (base.ToString ()).Append ("\", ");
+      sb.Append ("\"time\":").Append (this._time).Append (", ");
+      sb.Append ("\"interval\":").Append (this._interval).Append (", ");
+      sb.Append ("\"values\":[");
+
+      for (int i = 0; i < this._values.Count; i++)
+      {
+        if (i != 0)
+          sb.Append (",");
+        sb.Append (this._values[i]);
+      }
+
+      sb.Append ("]}");
+      return (sb.ToString ());
+    } /* string ToString */
   } /* }}} class ValueList */
 }
 
