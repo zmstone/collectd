@@ -27,75 +27,65 @@
 using System;
 using System.Collections;
 using System.Text;
-using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace CollectdAPI
 {
-  public interface IRead /* {{{ */
+  public delegate int CollectdReadCallback ();
+
+  public interface IValue /* {{{ */
   {
-    int read ();
-  } /* }}} interface IRead */
+    long ToLong ();
+    double ToDouble ();
+  } /* }}} class IValue */
 
-  public class Collectd /* {{{ */
-  {
-    [MethodImplAttribute(MethodImplOptions.InternalCall)]
-      public extern static int log (int severity, string message);
-
-    [MethodImplAttribute(MethodImplOptions.InternalCall)]
-      public extern static int registerRead (string name, IRead obj);
-
-    [MethodImplAttribute(MethodImplOptions.InternalCall)]
-      public extern static int dispatchValues (ValueList vl);
-  } /* }}} class Collectd */
-
-  public abstract class Value /* {{{ */
-  {
-    public abstract long toLong ();
-    public abstract double toDouble ();
-  } /* }}} class Value */
-
-  public class gaugeValue: Value /* {{{ */
+  public class GaugeValue: IValue /* {{{ */
   {
     private double _value;
 
-    public gaugeValue (double v)
+    public GaugeValue (double v)
     {
       this._value = v;
     }
 
-    public override long toLong () { return ((long) this._value); }
-    public override double toDouble () { return (this._value); }
+    public long ToLong () { return ((long) this._value); }
+    public double ToDouble () { return (this._value); }
 
     public override string ToString ()
     {
       return (this._value.ToString ());
     }
-  } /* }}} class gaugeValue */
+  } /* }}} class GaugeValue */
 
-  public class deriveValue: Value /* {{{ */
+  public class DeriveValue: IValue /* {{{ */
   {
     private long _value;
 
-    public deriveValue (long v)
+    public DeriveValue (long v)
     {
       this._value = v;
     }
 
-    public override long toLong () { return (this._value); }
-    public override double toDouble () { return ((double) this._value); }
+    public long ToLong () { return (this._value); }
+    public double ToDouble () { return ((double) this._value); }
 
     public override string ToString ()
     {
       return (this._value.ToString ());
     }
-  } /* }}} class deriveValue */
+  } /* }}} class DeriveValue */
 
   public class Identifier /* {{{ */
   {
+    [MarshalAs (UnmanagedType.LPStr)]
     protected string _host;
+    [MarshalAs (UnmanagedType.LPStr)]
     protected string _plugin;
+    [MarshalAs (UnmanagedType.LPStr)]
     protected string _pluginInstance;
+    [MarshalAs (UnmanagedType.LPStr)]
     protected string _type;
+    [MarshalAs (UnmanagedType.LPStr)]
     protected string _typeInstance;
 
     public Identifier (string host,
@@ -118,17 +108,77 @@ namespace CollectdAPI
       this._typeInstance   = id._typeInstance;
     } /* Identifier() */
 
-    public string getHost           () { return (this._host);           }
-    public string getPlugin         () { return (this._plugin);         }
-    public string getPluginInstance () { return (this._pluginInstance); }
-    public string getType           () { return (this._type);           }
-    public string getTypeInstance   () { return (this._typeInstance);   }
+    public string Host /* {{{ */
+    {
+      get
+      {
+        return (this._host);
+      }
+      set
+      {
+        if ((value == null) || (value.Length < 1))
+          throw new ArgumentException ();
+        this._host = value;
+      }
+    } /* }}} */
 
-    public void setHost           (string s) { this._host           = s; }
-    public void setPlugin         (string s) { this._plugin         = s; }
-    public void setPluginInstance (string s) { this._pluginInstance = s; }
-    public void setType           (string s) { this._type           = s; }
-    public void setTypeInstance   (string s) { this._typeInstance   = s; }
+    public string Plugin /* {{{ */
+    {
+      get
+      {
+        return (this._plugin);
+      }
+      set
+      {
+        if ((value == null) || (value.Length < 1))
+          throw new ArgumentException ();
+        this._plugin = value;
+      }
+    } /* }}} string Plugin */
+
+    public string PluginInstance /* {{{ */
+    {
+      get
+      {
+        return (this._pluginInstance);
+      }
+      set
+      {
+        if (value == null)
+          this._pluginInstance = "";
+        else
+          this._pluginInstance = value;
+      }
+    } /* }}} string PluginInstance */
+
+    public string Type /* {{{ */
+    {
+      get
+      {
+        return (this._type);
+      }
+      set
+      {
+        if ((value == null) || (value.Length < 1))
+          throw new ArgumentException ();
+        this._type = value;
+      }
+    } /* }}} string Type */
+
+    public string TypeInstance /* {{{ */
+    {
+      get
+      {
+        return (this._typeInstance);
+      }
+      set
+      {
+        if (value == null)
+          this._typeInstance = "";
+        else
+          this._typeInstance = value;
+      }
+    } /* }}} string TypeInstance */
 
     public override string ToString ()
     {
@@ -158,7 +208,7 @@ namespace CollectdAPI
     {
       this._interval = 10.0;
       this._values = new ArrayList ();
-      this.setTime (DateTime.Now);
+      this._time = 0.0;
     }
 
     public ValueList (ValueList vl)
@@ -169,54 +219,58 @@ namespace CollectdAPI
       this._time     = vl._time;
     }
 
-    public IList getValues ()
+    public IList GetValues ()
     {
       return (this._values);
     }
 
-    public void setValues (IList values)
+    public void SetValues (IList values)
     {
       this._values = new ArrayList (values);
     }
 
-    public void addValue (Value v)
+    public void AddValue (IValue v)
     {
       this._values.Add (v);
     }
 
-    public void clearValues ()
+    public void ClearValues ()
     {
       this._values.Clear ();
     }
 
-    public double getInterval ()
+    public double Interval
     {
-      return (this._interval);
+      get
+      {
+        return (this._interval);
+      }
+      set
+      {
+        if (value > 0.0)
+          this._interval = value;
+      }
     }
 
-    public void setInterval (double interval)
+    public double Time
     {
-      if (interval > 0.0)
-        this._interval = interval;
+      get
+      {
+        return (this._time);
+      }
+      set
+      {
+        if (value >= 0.0)
+          this._time = value;
+      }
     }
 
-    public double getTime ()
-    {
-      return (this._time);
-    }
-
-    public void setTime (DateTime dt)
+    public void SetTime (DateTime dt)
     {
       DateTime dtBase = new DateTime (1970,1,1,0,0,0);
       TimeSpan tsDiff = dt.ToUniversalTime () - dtBase;
 
       this._time = (double) tsDiff.TotalSeconds;
-    }
-
-    public void setTime (double t)
-    {
-      if (t > 0.0)
-        this._time = t;
     }
 
     public override string ToString ()
@@ -239,6 +293,116 @@ namespace CollectdAPI
       return (sb.ToString ());
     } /* string ToString */
   } /* }}} class ValueList */
+
+  [StructLayout (LayoutKind.Explicit)]
+  struct value_u /* {{{ */
+  {
+    /* Emulate a union */
+    [FieldOffset (0)] public double gauge;
+    [FieldOffset (0)] public long   derive;
+  } /* }}} struct value_u */
+
+  [StructLayout (LayoutKind.Sequential)]
+  struct value_list_s /* {{{ */
+  {
+    public value_u[] values;
+    public int values_num;
+    public double time;
+    public double interval;
+    [MarshalAs(UnmanagedType.LPStr)]
+    public string host;
+    [MarshalAs(UnmanagedType.LPStr)]
+    public string plugin;
+    [MarshalAs(UnmanagedType.LPStr)]
+    public string plugin_instance;
+    [MarshalAs(UnmanagedType.LPStr)]
+    public string type;
+    [MarshalAs(UnmanagedType.LPStr)]
+    public string type_instance;
+
+    public value_list_s (ValueList vl)
+    {
+      IList values = vl.GetValues ();
+
+      this.values_num = values.Count;
+      this.values = new value_u[this.values_num];
+      for (int i = 0; i < values.Count; i++)
+      {
+        IValue v = values[i] as IValue;
+
+        if (v is GaugeValue)
+          this.values[i].gauge = v.ToDouble ();
+        else
+          this.values[i].derive = v.ToLong ();
+      }
+      this.time = vl.Time;
+      this.interval = vl.Interval;
+
+      this.host = vl.Host;
+      this.plugin = vl.Plugin;
+      this.plugin_instance = vl.PluginInstance;
+      this.type = vl.Type;
+      this.type_instance = vl.TypeInstance;
+    }
+  } /* }}} struct value_list_s */
+
+  public class Collectd /* {{{ */
+  {
+    private static Hashtable _readFunctions = new Hashtable ();
+
+    [DllImport("__Internal", EntryPoint="plugin_log")]
+    private extern static int _log (
+        [MarshalAs(UnmanagedType.SysInt)] int severity,
+        [MarshalAs(UnmanagedType.LPStr)]  string message);
+
+    [DllImport("__Internal", EntryPoint="dotnet_register_read")]
+    private extern static int _registerRead (
+        [MarshalAs(UnmanagedType.LPStr)] string name,
+        CollectdReadCallback func);
+
+    [DllImport("__Internal", EntryPoint="dotnet_dispatch_values")]
+    private extern static int _dispatchValues (value_list_s vl);
+
+    public static int DispatchValues (ValueList vl)
+    {
+      return (_dispatchValues (new value_list_s (vl)));
+    }
+
+    public static int LogError (string message)
+    {
+      return (_log (3, message));
+    }
+
+    public static int LogWarning (string message)
+    {
+      return (_log (4, message));
+    }
+
+    public static int LogNotice (string message)
+    {
+      return (_log (5, message));
+    }
+
+    public static int LogInfo (string message)
+    {
+      return (_log (6, message));
+    }
+
+    public static int LogDebug (string message)
+    {
+      return (_log (7, message));
+    }
+
+    public static int RegisterRead (string name, CollectdReadCallback func)
+    {
+      if (_readFunctions.Contains (name))
+        return (-1);
+      _readFunctions.Add (name, func);
+
+      return (_registerRead (name, func));
+    }
+  } /* }}} class Collectd */
+
 }
 
 /* vim: set sw=2 sts=2 et fdm=marker : */

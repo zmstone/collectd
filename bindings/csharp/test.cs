@@ -1,29 +1,24 @@
 using CollectdAPI;
 
-public class EmbedTest: IRead
+public class EmbedTest
 {
 	public EmbedTest ()
 	{
-		System.Console.WriteLine ("EmbedTest ();");
-		Collectd.registerRead ("EmbedTest::read", this);
+		Collectd.LogInfo ("EmbedTest plugin: Initializing the module.");
+		Collectd.RegisterRead ("EmbedTest", new CollectdReadCallback (read));
 	}
 
 	public int read ()
 	{
-		ValueList vl = new ValueList ("host", "plugin", "pinst", "type", "tinst");
+		ValueList vl = new ValueList ("localhost", "dotnet", "", "gauge", "test");
 
-		vl.setInterval (10.0);
-		vl.addValue (new gaugeValue (3.1337));
+		vl.Interval = 10.0;
+		vl.AddValue (new GaugeValue (31337));
 
-		System.Console.WriteLine ("vl: " + vl);
+		Collectd.LogDebug ("vl: " + vl);
 
-		Collectd.dispatchValues (vl);
+		Collectd.DispatchValues (vl);
 		return (0);
-	}
-
-	public static void Main()
-	{
-		System.Console.WriteLine("Hello, World!");
 	}
 }
 
