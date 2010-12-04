@@ -48,9 +48,43 @@ struct dotnet_value_list_s
 };
 typedef struct dotnet_value_list_s dotnet_value_list_t;
 
+#define CB_TYPE_INIT         2
+struct dotnet_callback_info_s;
+typedef struct dotnet_callback_info_s dotnet_callback_info_t;
+struct dotnet_callback_info_s
+{
+  char *name;
+  int type;
+  void *callback;
+  dotnet_callback_info_t *next;
+};
+
 typedef int (*dotnet_read_cb) (void);
 
 static MonoDomain *_domain = NULL;
+static dotnet_callback_info_t *callback_list = NULL;
+
+static int dotnet_init (void) /* {{{ */
+{
+  dotnet_callback_info_t *ci;
+
+  for (ci = callback_list; ci != NULL; ci = ci->next)
+  {
+    plugin_init_cb cb;
+    int status;
+
+    if (ci->type != CB_TYPE_INIT)
+      continue;
+
+    cb = ci->callback;
+    status = (*cb) ();
+    if (status != 0)
+      ERROR ("dotnet plugin: The init function \"%s\" failed with status %i.",
+          ci->name, status);
+  } /* for (callback_list) */
+
+  return (0);
+} /* }}} int dotnet_init */
 
 static int dotnet_read (user_data_t *ud) /* {{{ */
 {
@@ -62,6 +96,34 @@ static int dotnet_read (user_data_t *ud) /* {{{ */
 /*
  * Functions exposed to .Net
  */
+int dotnet_register_init (const char *name, plugin_init_cb cb) /* {{{ */
+{
+  dotnet_callback_info_t *ci;
+
+  if ((name == NULL) || (cb == NULL))
+    return (EINVAL);
+
+  ci = malloc (sizeof (*ci));
+  if (ci == NULL)
+    return (ENOMEM);
+  memset (ci, 0, sizeof (*ci));
+
+  ci->name = strdup (name);
+  if (ci->name == NULL)
+  {
+    sfree (ci);
+    return (ENOMEM);
+  }
+
+  ci->type = CB_TYPE_INIT;
+  ci->callback = cb;
+  
+  ci->next = callback_list;
+  callback_list = ci;
+
+  return (0);
+} /* }}} int dotnet_register_init */
+
 int dotnet_register_read (const char *name, dotnet_read_cb cb) /* {{{ */
 {
   user_data_t ud;
@@ -269,6 +331,7 @@ void module_register (void)
     return;
   }
 
+  plugin_register_init ("dotnet", dotnet_init);
   plugin_register_complex_config ("dotnet", dotnet_config);
 } /* void module_register */
 

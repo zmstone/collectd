@@ -31,6 +31,7 @@ using System.Runtime.InteropServices;
 
 namespace CollectdAPI
 {
+  public delegate int CollectdInitCallback ();
   public delegate int CollectdReadCallback ();
 
   public interface IValue /* {{{ */
@@ -349,11 +350,17 @@ namespace CollectdAPI
   public class Collectd /* {{{ */
   {
     private static Hashtable _readFunctions = new Hashtable ();
+    private static Hashtable _initFunctions = new Hashtable ();
 
     [DllImport("__Internal", EntryPoint="plugin_log")]
     private extern static int _log (
         [MarshalAs(UnmanagedType.SysInt)] int severity,
         [MarshalAs(UnmanagedType.LPStr)]  string message);
+
+    [DllImport("__Internal", EntryPoint="dotnet_register_init")]
+    private extern static int _registerInit (
+        [MarshalAs(UnmanagedType.LPStr)] string name,
+        CollectdInitCallback func);
 
     [DllImport("__Internal", EntryPoint="dotnet_register_read")]
     private extern static int _registerRead (
@@ -392,6 +399,15 @@ namespace CollectdAPI
     {
       return (_log (7, message));
     }
+
+    public static int RegisterInit (string name, CollectdInitCallback func)
+    {
+      if (_initFunctions.Contains (name))
+        return (-1);
+      _initFunctions.Add (name, func);
+
+      return (_registerInit (name, func));
+    } /* int RegisterInit */
 
     public static int RegisterRead (string name, CollectdReadCallback func)
     {
