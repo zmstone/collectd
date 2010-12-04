@@ -347,6 +347,13 @@ namespace CollectdAPI
     }
   } /* }}} struct value_list_s */
 
+  /// <summary>
+  /// This is the main class for interacting with collectd.
+  /// </summary>
+  /// <remarks>
+  /// The functions exported by collectd are available from this class as
+  /// public static methods.
+  /// </remarks>
   public class Collectd /* {{{ */
   {
     private static Hashtable _readFunctions = new Hashtable ();
@@ -370,36 +377,43 @@ namespace CollectdAPI
     [DllImport("__Internal", EntryPoint="dotnet_dispatch_values")]
     private extern static int _dispatchValues (value_list_s vl);
 
-    public static int DispatchValues (ValueList vl)
-    {
-      return (_dispatchValues (new value_list_s (vl)));
-    }
-
+    /// <summary>Logs an error message.</summary>
+    /// <remarks>Do not include a newline at the end.</remarks>
     public static int LogError (string message)
     {
       return (_log (3, message));
     }
 
+    /// <summary>Logs a warning message.</summary>
+    /// <remarks>Do not include a newline at the end.</remarks>
     public static int LogWarning (string message)
     {
       return (_log (4, message));
     }
 
+    /// <summary>Logs a message with severity &quot;notice&quot;.</summary>
+    /// <remarks>Do not include a newline at the end.</remarks>
     public static int LogNotice (string message)
     {
       return (_log (5, message));
     }
 
+    /// <summary>Logs a message with severity &quot;info&quot;.</summary>
+    /// <remarks>Do not include a newline at the end.</remarks>
     public static int LogInfo (string message)
     {
       return (_log (6, message));
     }
 
+    /// <summary>Logs a debug message.</summary>
+    /// <remarks>Do not include a newline at the end.</remarks>
     public static int LogDebug (string message)
     {
       return (_log (7, message));
     }
 
+    /// <summary>Register an init callback.</summary>
+    /// <param name="name">Name uniquely identifying the callback function.</param>
     public static int RegisterInit (string name, CollectdInitCallback func)
     {
       if (_initFunctions.Contains (name))
@@ -409,6 +423,8 @@ namespace CollectdAPI
       return (_registerInit (name, func));
     } /* int RegisterInit */
 
+    /// <summary>Register a read callback.</summary>
+    /// <param name="name">Name uniquely identifying the callback function.</param>
     public static int RegisterRead (string name, CollectdReadCallback func)
     {
       if (_readFunctions.Contains (name))
@@ -417,8 +433,13 @@ namespace CollectdAPI
 
       return (_registerRead (name, func));
     }
-  } /* }}} class Collectd */
 
+    /// <summary>Dispatches a <code>ValueList</code> to the daemon.</summary>
+    public static int DispatchValues (ValueList vl)
+    {
+      return (_dispatchValues (new value_list_s (vl)));
+    }
+  } /* }}} class Collectd */
 }
 
 /* vim: set sw=2 sts=2 et fdm=marker : */
