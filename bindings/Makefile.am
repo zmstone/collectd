@@ -1,5 +1,9 @@
 SUBDIRS =
 
+if BUILD_WITH_CSC
+SUBDIRS += csharp
+endif
+
 if BUILD_WITH_JAVA
 SUBDIRS += java
 endif

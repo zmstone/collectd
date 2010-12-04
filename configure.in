@@ -48,6 +48,9 @@ AC_PROG_LEX
 AC_PROG_YACC
 PKG_PROG_PKG_CONFIG
 
+AC_CHECK_PROGS([CSC], csc mono-csc, [no])
+AM_CONDITIONAL(BUILD_WITH_CSC, test "x$CSC" != "no")
+
 AC_CHECK_PROG([have_protoc_c], [protoc-c], [yes], [no])
 AM_CONDITIONAL(HAVE_PROTOC_C, test "x$have_protoc_c" = "xyes")
 
@@ -5096,7 +5099,7 @@ AC_SUBST(LCC_VERSION_STRING)
 
 AC_CONFIG_FILES(src/libcollectdclient/lcc_features.h)
 
-AC_OUTPUT(Makefile src/Makefile src/collectd.conf src/libcollectdclient/Makefile src/libcollectdclient/libcollectdclient.pc src/liboconfig/Makefile bindings/Makefile bindings/java/Makefile)
+AC_OUTPUT(Makefile src/Makefile src/collectd.conf src/libcollectdclient/Makefile src/libcollectdclient/libcollectdclient.pc src/liboconfig/Makefile bindings/Makefile bindings/csharp/Makefile bindings/java/Makefile)
 
 if test "x$with_librrd" = "xyes" \
 	&& test "x$librrd_threadsafe" != "xyes"
@@ -5166,6 +5169,7 @@ Configuration:
     libxmms . . . . . . . $with_libxmms
     libyajl . . . . . . . $with_libyajl
     libevent  . . . . . . $with_libevent
+    csc . . . . . . . . . $CSC
     protobuf-c  . . . . . $have_protoc_c
     oracle  . . . . . . . $with_oracle
     python  . . . . . . . $with_python
