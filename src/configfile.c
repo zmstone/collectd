@@ -264,7 +264,8 @@ static int dispatch_loadplugin (const oconfig_item_t *ci)
 	 * So in order to save everyone's sanity use a different default for a
 	 * handful of special plugins. --octo
 	 */
-	if ((strcasecmp ("Perl", name) == 0)
+	if ((strcasecmp ("DotNet", name) == 0)
+			|| (strcasecmp ("Perl", name) == 0)
 			|| (strcasecmp ("Python", name) == 0))
 		flags |= PLUGIN_FLAGS_GLOBAL;
 
