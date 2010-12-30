@@ -6,6 +6,7 @@ public class EmbedTest
 	{
 		Collectd.LogInfo ("EmbedTest plugin: Initializing the module.");
 		Collectd.RegisterRead ("EmbedTest", new CollectdReadCallback (read));
+		// Collectd.RegisterWrite ("EmbedTest", new CollectdWriteCallback (write));
 	}
 
 	public int read ()
@@ -18,6 +19,12 @@ public class EmbedTest
 		Collectd.LogDebug ("vl: " + vl);
 
 		Collectd.DispatchValues (vl);
+		return (0);
+	}
+
+	public int write (ValueList vl)
+	{
+		Collectd.LogInfo ("EmbedTest plugin: write() called.");
 		return (0);
 	}
 }

@@ -36,17 +36,15 @@
 
 struct dotnet_value_list_s
 {
-  value_t *values;
-  int values_len;
   double time;
   double interval;
-  char *host;
-  char *plugin;
-  char *plugin_instance;
-  char *type;
-  char *type_instance;
+  const char *host;
+  const char *plugin;
+  const char *plugin_instance;
+  const char *type;
+  const char *type_instance;
 };
-typedef struct dotnet_value_list_s dotnet_value_list_t;
+typedef struct dotnet_value_list_s dotnet_value_data_t;
 
 #define CB_TYPE_INIT         2
 struct dotnet_callback_info_s;
@@ -60,6 +58,8 @@ struct dotnet_callback_info_s
 };
 
 typedef int (*dotnet_read_cb) (void);
+typedef int (*dotnet_write_cb) (dotnet_value_data_t *vd,
+    int values_len, value_t *values, int *values_types);
 
 static MonoDomain *_domain = NULL;
 static dotnet_callback_info_t *callback_list = NULL;
@@ -92,6 +92,33 @@ static int dotnet_read (user_data_t *ud) /* {{{ */
 
   return ((*cb) ());
 } /* }}} int dotnet_read */
+
+static int dotnet_write (const data_set_t *ds, const value_list_t *vl, /* {{{ */
+    user_data_t *ud)
+{
+  dotnet_write_cb cb = ud->data;
+  dotnet_value_data_t vd;
+  int values_types[vl->values_len];
+  int status;
+  int i;
+
+  DEBUG ("dotnet plugin: dotnet_write ();");
+
+  memset (&vd, 0, sizeof (vd));
+  vd.time = CDTIME_T_TO_DOUBLE (vl->time);
+  vd.interval = CDTIME_T_TO_DOUBLE (vl->interval);
+  vd.host = vl->host;
+  vd.plugin = vl->plugin;
+  vd.plugin_instance = vl->plugin_instance;
+  vd.type = vl->type;
+  vd.type_instance = vl->type_instance;
+
+  for (i = 0; i < ds->ds_num; i++)
+    values_types[i] = ds->ds[i].type;
+
+  status = (*cb) (&vd, vl->values_len, vl->values, values_types);
+  return (status);
+} /* }}} int dotnet_write */
 
 /*
  * Functions exposed to .Net
@@ -141,28 +168,47 @@ int dotnet_register_read (const char *name, dotnet_read_cb cb) /* {{{ */
   return (0);
 } /* }}} int dotnet_register_read */
 
-int dotnet_dispatch_values (dotnet_value_list_t *dvl) /* {{{ */
+int dotnet_register_write (const char *name, dotnet_write_cb cb) /* {{{ */
+{
+  user_data_t ud;
+
+  DEBUG ("dotnet plugin: dotnet_register_write (\"%s\");", name);
+
+  memset (&ud, 0, sizeof (ud));
+  ud.data = cb;
+  ud.free_func = NULL;
+
+  plugin_register_write (name, dotnet_write, &ud);
+
+  return (0);
+} /* }}} int dotnet_register_write */
+
+int dotnet_dispatch_values (dotnet_value_data_t *vd, /* {{{ */
+    int values_len, value_t *values)
 {
   value_list_t vl = VALUE_LIST_INIT;
 
-  vl.values = dvl->values;
-  vl.values_len = dvl->values_len;
+  DEBUG ("dotnet_dispatch_values (vd = %p, values_len = %i, values = %p);",
+      (void *) vd, values_len, (void *) values);
 
-  if (dvl->time > 0.0)
-    vl.time = DOUBLE_TO_CDTIME_T (dvl->time);
+  vl.values_len = values_len;
+  vl.values = values;
+
+  if (vd->time > 0.0)
+    vl.time = DOUBLE_TO_CDTIME_T (vd->time);
   else
     vl.interval = 0;
 
-  if (dvl->interval > 0.0)
-    vl.interval = DOUBLE_TO_CDTIME_T (dvl->interval);
+  if (vd->interval > 0.0)
+    vl.interval = DOUBLE_TO_CDTIME_T (vd->interval);
   else
     vl.interval = interval_g;
 
-  sstrncpy (vl.host, dvl->host, sizeof (vl.host));
-  sstrncpy (vl.plugin, dvl->plugin, sizeof (vl.plugin));
-  sstrncpy (vl.plugin_instance, dvl->plugin_instance, sizeof (vl.plugin_instance));
-  sstrncpy (vl.type, dvl->type, sizeof (vl.type));
-  sstrncpy (vl.type_instance, dvl->type_instance, sizeof (vl.type_instance));
+  sstrncpy (vl.host, vd->host, sizeof (vl.host));
+  sstrncpy (vl.plugin, vd->plugin, sizeof (vl.plugin));
+  sstrncpy (vl.plugin_instance, vd->plugin_instance, sizeof (vl.plugin_instance));
+  sstrncpy (vl.type, vd->type, sizeof (vl.type));
+  sstrncpy (vl.type_instance, vd->type_instance, sizeof (vl.type_instance));
 
   return (plugin_dispatch_values (&vl));
 } /* }}} int dotnet_dispatch_values */
@@ -179,6 +225,12 @@ static int dotnet_load_class (const char *assembly_name, /* {{{ */
   MonoImage *image;
   MonoClass *class;
   MonoObject *obj;
+
+  DEBUG ("dotnet plugin: dotnet_load_class ("
+      "assembly_name = \"%s\", "
+      "name_space = \"%s\", "
+      "class_name = \"%s\");",
+      assembly_name, (name_space != NULL) ? name_space : "", class_name);
 
   domain = mono_domain_create ();
   if (domain == NULL)
@@ -243,6 +295,7 @@ static int dotnet_load_class (const char *assembly_name, /* {{{ */
     return (-1);
   }
 
+  DEBUG ("dotnet plugin: mono_runtime_object_init ();");
   mono_runtime_object_init (obj);
 
   DEBUG ("dotnet plugin: Successfully created a \"%s\" object.", class_name);

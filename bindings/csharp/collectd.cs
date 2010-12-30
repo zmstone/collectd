@@ -33,6 +33,7 @@ namespace CollectdAPI
 {
   public delegate int CollectdInitCallback ();
   public delegate int CollectdReadCallback ();
+  public delegate int CollectdWriteCallback (ValueList vl);
 
   public interface IValue /* {{{ */
   {
@@ -212,6 +213,29 @@ namespace CollectdAPI
       this._time = 0.0;
     }
 
+    internal ValueList (value_data_s vd,
+        int values_len, value_u[] values, int[] values_types)
+      :base (vd.host,
+          vd.plugin, vd.plugin_instance,
+          vd.type, vd.type_instance)
+    {
+      this._time = vd.time;
+      this._interval = vd.interval;
+
+      this._values = new ArrayList (values_len);
+      for (int i = 0; i < values_len; i++)
+      {
+        IValue iv;
+
+        if (values_types[i] == Collectd.DS_TYPE_GAUGE)
+          iv = new GaugeValue (values[i].gauge);
+        else
+          iv = new DeriveValue (values[i].derive);
+
+        this._values.Insert (i, iv);
+      }
+    }
+
     public ValueList (ValueList vl)
       :base (vl)
     {
@@ -304,10 +328,8 @@ namespace CollectdAPI
   } /* }}} struct value_u */
 
   [StructLayout (LayoutKind.Sequential)]
-  struct value_list_s /* {{{ */
+  struct value_data_s /* {{{ */
   {
-    public value_u[] values;
-    public int values_num;
     public double time;
     public double interval;
     [MarshalAs(UnmanagedType.LPStr)]
@@ -321,21 +343,9 @@ namespace CollectdAPI
     [MarshalAs(UnmanagedType.LPStr)]
     public string type_instance;
 
-    public value_list_s (ValueList vl)
+    /* Create a value_data_s structure from a ValueList object */
+    public value_data_s (ValueList vl)
     {
-      IList values = vl.GetValues ();
-
-      this.values_num = values.Count;
-      this.values = new value_u[this.values_num];
-      for (int i = 0; i < values.Count; i++)
-      {
-        IValue v = values[i] as IValue;
-
-        if (v is GaugeValue)
-          this.values[i].gauge = v.ToDouble ();
-        else
-          this.values[i].derive = v.ToLong ();
-      }
       this.time = vl.Time;
       this.interval = vl.Interval;
 
@@ -345,7 +355,23 @@ namespace CollectdAPI
       this.type = vl.Type;
       this.type_instance = vl.TypeInstance;
     }
-  } /* }}} struct value_list_s */
+  } /* }}} struct value_data_s */
+
+  internal class WriteMarshaler /* {{{ */
+  {
+    private CollectdWriteCallback _func;
+
+    public WriteMarshaler (CollectdWriteCallback func)
+    {
+      this._func = func;
+    }
+
+    public int invoke (value_data_s vd,
+        int values_len, value_u[] values, int[] values_types)
+    {
+      return (this._func (new ValueList (vd, values_len, values, values_types)));
+    }
+  } /* }}} class WriteMarshaler */
 
   /// <summary>
   /// This is the main class for interacting with collectd.
@@ -356,8 +382,21 @@ namespace CollectdAPI
   /// </remarks>
   public class Collectd /* {{{ */
   {
-    private static Hashtable _readFunctions = new Hashtable ();
     private static Hashtable _initFunctions = new Hashtable ();
+    private static Hashtable _readFunctions = new Hashtable ();
+    private static Hashtable _writeFunctions = new Hashtable ();
+
+    private delegate int MarshaledWriteCallback (value_data_s vd,
+        int values_len,
+        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex=1)] value_u[] values,
+        [MarshalAs(UnmanagedType.LPArray, SizeParamIndex=1)] int[] values_types);
+
+    /* Const membes are static by default, so we're not allowed to specify that
+     * again. */
+    public const int DS_TYPE_COUNTER  = 0;
+    public const int DS_TYPE_GAUGE    = 1;
+    public const int DS_TYPE_DERIVE   = 2;
+    public const int DS_TYPE_ABSOLUTE = 3;
 
     [DllImport("__Internal", EntryPoint="plugin_log")]
     private extern static int _log (
@@ -374,8 +413,16 @@ namespace CollectdAPI
         [MarshalAs(UnmanagedType.LPStr)] string name,
         CollectdReadCallback func);
 
+    [DllImport("__Internal", EntryPoint="dotnet_register_write")]
+    private extern static int _registerWrite (
+        [MarshalAs(UnmanagedType.LPStr)] string name,
+        MarshaledWriteCallback func);
+
     [DllImport("__Internal", EntryPoint="dotnet_dispatch_values")]
-    private extern static int _dispatchValues (value_list_s vl);
+    private extern static int _dispatchValues (ref value_data_s vd,
+        int values_len,
+        /* [MarshalAs(UnmanagedType.LPArray)] */ value_u[] values
+        );
 
     /// <summary>Logs an error message.</summary>
     /// <remarks>Do not include a newline at the end.</remarks>
@@ -434,10 +481,37 @@ namespace CollectdAPI
       return (_registerRead (name, func));
     }
 
+    public static int RegisterWrite (string name, CollectdWriteCallback func)
+    {
+      WriteMarshaler marshaler = new WriteMarshaler (func);
+
+      /* Keep a copy of the object so it isn't garbage collected */
+      if (_writeFunctions.Contains (name))
+        return (-1);
+      _writeFunctions.Add (name, marshaler);
+
+      return (_registerWrite (name, new MarshaledWriteCallback (marshaler.invoke)));
+    }
+
     /// <summary>Dispatches a <code>ValueList</code> to the daemon.</summary>
     public static int DispatchValues (ValueList vl)
     {
-      return (_dispatchValues (new value_list_s (vl)));
+      IList        list       = vl.GetValues ();
+      value_data_s vd         = new value_data_s (vl);
+      int          values_len = list.Count;
+      value_u[]    values     = new value_u[values_len];
+
+      for (int i = 0; i < values_len; i++)
+      {
+        IValue v = list[i] as IValue;
+
+        if (v is GaugeValue)
+          values[i].gauge = v.ToDouble ();
+        else
+          values[i].derive = v.ToLong ();
+      }
+
+      return (_dispatchValues (ref vd, values_len, values));
     }
   } /* }}} class Collectd */
 }
