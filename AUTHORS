@@ -95,6 +95,7 @@ Manuel Sanmartin
    + memory
    + processes
    + swap
+ - WPAR plugin.
  - Various AIX-related fixes and hacks.
 
 Marco Chiappero <marco at absence.it>

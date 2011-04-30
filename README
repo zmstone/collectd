@@ -302,6 +302,10 @@ Features
     - wireless
       Link quality of wireless cards. Linux only.
 
+    - wpar
+      CPU usage, memory utilization and system load of AIX's “Workload
+      Partitions” (WPAR).
+
     - xmms
       Bitrate and frequency of music played with XMMS.
 
