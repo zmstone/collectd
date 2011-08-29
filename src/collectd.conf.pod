@@ -4816,13 +4816,12 @@ are:
 
 Publish values to a list of subscribers. Each value is send to all subscribers,
 unless their high water mark has been reached. The B<Endpoint> options of this
-socket should list I<local> addresses that the publisher should I<bind> to.
+socket should list I<remote> addresses that the publisher should I<connect> to.
 
 =item Subscribe
 
 Subscribe to values published by a publisher. The B<Endpoint> options of this
-socket should list I<remote> addresses that the subscriber should I<connect>
-to.
+socket should list I<local> addresses that the subscriber should I<bind> to.
 
 =item Push
 
