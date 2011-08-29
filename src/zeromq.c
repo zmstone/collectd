@@ -338,7 +338,7 @@ static int cmq_config_socket (oconfig_item_t *ci) /* {{{ */
       if (status != 0)
         continue;
 
-      if ((type == ZMQ_SUB) || (type == ZMQ_PULL))
+      if ((type == ZMQ_PUB) || (type == ZMQ_PULL))
       {
         DEBUG("Binding to %s", value);
         status = zmq_bind (cmq_socket, value);
@@ -350,7 +350,7 @@ static int cmq_config_socket (oconfig_item_t *ci) /* {{{ */
           continue;
         }
       }
-      else if ((type == ZMQ_PUB) || (type == ZMQ_PUSH))
+      else if ((type == ZMQ_SUB) || (type == ZMQ_PUSH))
       {
         DEBUG("Connecting to %s", value);
         status = zmq_connect (cmq_socket, value);

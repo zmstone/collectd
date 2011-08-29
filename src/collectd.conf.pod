@@ -4764,8 +4764,8 @@ number.
 =head2 Plugin C<zeromq>
 
 This plugin acts as an alternative to the I<Network plugin> (you could also use
-both). The protocol used is the same binary protocol used by the network
-plugin, but this plugin uses the ZeroMQ communication library with can brings
+both). The protocol used is the same binary protocol used by the
+I<Network plugin>, but uses the ZeroMQ communication library with offers
 interesting features like:
 
 =over 4
@@ -4777,28 +4777,89 @@ available again and dropped packets will be sent again.
 
 =item
 
-Protocol choice: ZeroMQ can use the TCP, PGM, IPC and "inproc" communication
-transports. Check the ZeroMQ documentation for more information on each
-transport.
+Protocol choice: ZeroMQ can use the TCP, PGM (reliable multicast), IPC and
+"inproc" communication transports. Check the ZeroMQ documentation for more
+information on each transport.
 
 =back
 
 Synopsis:
 
   <Plugin "zeromq">
-    SendDataTo "tcp://localhost:6666"
-    ListenOn "tcp://*:6666"
+    Threads 2
+    
+    <Socket Publish>
+      HWM 300
+      Endpoint "tcp://localhost:6666"
+    </Socket>
+    <Socket Subscribe>
+      Endpoint "tcp://eth0:6666"
+      Endpoint "tcp://collectd.example.com:6666"
+    </Socket>
   </Plugin>
 
 =over 4
 
-=item B<SendDataTo> I<socket>
+=item B<Threads> I<number>
 
-Optional socket to send data to
+Number of threads to use for ZeroMQ communication. Defaults toE<nbsp>1.
 
-=item B<ListenOn> I<socket>
+=item B<Socket> B<Publish>|B<Subscribe>|B<Push>|B<Pull>
 
-Optional socket to listen on
+Creates a new communication socket with the given communication model. Please
+see L<zmq_socket(3)> for a discussion of possible socket types. Valid options
+are:
+
+=over 4
+
+=item Publish
+
+Publish values to a list of subscribers. Each value is send to all subscribers,
+unless their high water mark has been reached. The B<Endpoint> options of this
+socket should list I<local> addresses that the publisher should I<bind> to.
+
+=item Subscribe
+
+Subscribe to values published by a publisher. The B<Endpoint> options of this
+socket should list I<remote> addresses that the subscriber should I<connect>
+to.
+
+=item Push
+
+Send the values in a pipeline fashion to a peer node. If multiple endpoints are
+defined, values will be load balanced among those endpoints, i.e. each peer
+gets only a subset of all values. The B<Endpoint> options of this socket should
+list I<remote> addresses that the subscriber should I<connect> to.
+
+=item Pull
+
+Receive values in a pipeline fashion. If multiple endpoints are defined, reads
+from those endpoints are load balanced. The B<Endpoint> options of this socket
+should list I<local> addresses that the publisher should I<bind> to.
+
+=back
+
+Inside B<Socket> blocks, the following options are recognized:
+
+=over 4
+
+=item B<Endpoint> I<endpoint>
+
+Specifies an ZeroMQ endpoint. For I<Publish> and I<Pull> sockets this value is
+passed to the C<zmq_bind> function, for I<Subscribe> and I<Push> sockets it is
+passed to the C<zmq_connect> function.
+
+Please see L<zmq_bind(3)> and L<zmq_connect(3)> for documentation of the target
+specification.
+
+=item B<HWM> I<number>
+
+Sets the I<High Water Mark> (HWM) for the ZeroMQ socket. This is the maximum
+amount of outstanding messages that will be queued by ZeroMQ. A value of zero
+is interpreted as unlimited. Defaults to not setting this socket option, which
+defaults to unlimited message queueing.
+
+=back
 
 =back
 
