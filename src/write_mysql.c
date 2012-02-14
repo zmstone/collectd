@@ -1,6 +1,6 @@
 /**
  * collectd - src/write_mysql.c
- * Copyright (C) 2011       Cyril Feraudet
+ * Copyright (C) 2011-2012  Cyril Feraudet
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
