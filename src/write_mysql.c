@@ -55,15 +55,14 @@ static const char *config_keys[] = {
   "Port",
   "Replace"
 };
-
 static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
 static char *host = "localhost";
 static char *user = "root";
 static char *passwd = "";
 static char *database = "collectd";
-static int  port = 0;
-static int  replace = 1;
+static int   port = 0;
+static _Bool replace = 1;
 
 #define HOST_ITEM   0
 #define PLUGIN_ITEM 1
@@ -78,7 +77,7 @@ static pthread_mutex_t mutexhost_tree, mutexplugin_tree, mutextype_tree,
   mutexdataset_tree;
 
 static char data_query[1024];
-static char notif_query[1024] =
+static const char *notif_query =
   "INSERT INTO notification  (date,host_id,plugin_id,"
   "plugin_instance,type_id,type_instance,severity,message) VALUES "
   "(?,?,?,?,?,?,?,?)";
@@ -108,14 +107,7 @@ write_mysql_config (const char *key, const char *value)
     }
   else if (strcasecmp ("Replace", key) == 0)
     {
-      if (IS_TRUE (value))
-        {
-          replace = 1;
-        }
-      else
-        {
-          replace = 0;
-        }
+      replace = IS_TRUE (value);
     }
 }
 
@@ -141,9 +133,9 @@ write_mysql_init (void)
 	     mysql_error (conn));
     }
   char tmpquery[1024] = "%s INTO data "
-    "(date,host_id,plugin_id,plugin_instance,type_id,type_instance,dataset_id,value)"
+    "(timestamp,host_id,plugin_id,plugin_instance,type_id,type_instance,dataset_id,value)"
     "VALUES (?,?,?,?,?,?,?,?)";
-  ssnprintf (data_query, sizeof (tmpquery), tmpquery, (replace == 1 ? "REPLACE" : "INSERT"));
+  ssnprintf (data_query, sizeof (tmpquery), tmpquery, replace ? "REPLACE" : "INSERT");
   mysql_options (conn, MYSQL_OPT_RECONNECT, &my_true);
   data_stmt = mysql_stmt_init (conn);
   notif_stmt = mysql_stmt_init (conn);
@@ -515,12 +507,40 @@ get_dataset_id (data_source_t * ds, int type_id)
     }
 }
 
+static int wm_cdtime_t_to_mysql_time (cdtime_t in, MYSQL_TIME *out) /* {{{ */
+{
+  time_t t;
+  struct tm stm;
+
+  memset (out, 0, sizeof (*out));
+  memset (&stm, 0, sizeof (stm));
+
+  t = CDTIME_T_TO_TIME_T (in);
+  if (localtime_r (&t, &stm) == NULL)
+  {
+    ERROR ("write_mysql plugin: localtime_r(%.3f) failed.",
+        CDTIME_T_TO_DOUBLE (in));
+    return (-1);
+  }
+
+  out->year   = stm.tm_year + 1900;
+  out->month  = stm.tm_mon + 1;
+  out->day    = stm.tm_mday;
+  out->hour   = stm.tm_hour;
+  out->minute = stm.tm_min;
+  out->second = stm.tm_sec;
+
+  return (0);
+} /* }}} int wm_cdtime_t_to_mysql_time */
+
 static int
 write_mysql_write (const data_set_t * ds, const value_list_t * vl,
 		   user_data_t __attribute__ ((unused)) * user_data)
 {
   int i;
   int host_id, plugin_id, type_id, aa;
+  gauge_t *rates = NULL;
+
   host_id = get_item_id ((char *) vl->host, HOST_ITEM);
   plugin_id = get_item_id ((char *) vl->plugin, PLUGIN_ITEM);
   type_id = get_item_id ((char *) vl->type, TYPE_ITEM);
@@ -528,49 +548,41 @@ write_mysql_write (const data_set_t * ds, const value_list_t * vl,
     {
       return -1;
     }
-  gauge_t *rates = NULL;
+
   for (i = 0; i < ds->ds_num; i++)
     {
       int len;
-      data_source_t *dso = ds->ds + i;
-      int dataset_id = get_dataset_id (dso, type_id);
-      if (dataset_id == -1)
-	{
-	  return -1;
-	}
+      data_source_t *dsrc = ds->ds + i;
+      int dataset_id = get_dataset_id (dsrc, type_id);
+      MYSQL_BIND binding[8];
       MYSQL_TIME mysql_date;
-      struct tm *time;
-      time_t timet;
-      timet = CDTIME_T_TO_TIME_T (vl->time);
-      time = localtime (&timet);
-      mysql_date.year = time->tm_year + 1900;
-      mysql_date.month = time->tm_mon + 1;
-      mysql_date.day = time->tm_mday;
-      mysql_date.hour = time->tm_hour;
-      mysql_date.minute = time->tm_min;
-      mysql_date.second = time->tm_sec;
-      pthread_mutex_lock (&mutexdb);
-      memset (data_bind, '\0', sizeof (MYSQL_BIND) * 8);
-      data_bind[0].buffer_type = MYSQL_TYPE_DATETIME;
-      data_bind[0].buffer = (char *) &mysql_date;
-      data_bind[1].buffer_type = MYSQL_TYPE_LONG;
-      data_bind[1].buffer = (void *) &host_id;
-      data_bind[2].buffer_type = MYSQL_TYPE_LONG;
-      data_bind[2].buffer = (void *) &plugin_id;
-      data_bind[3].buffer_type = MYSQL_TYPE_STRING;
-      data_bind[3].buffer = (void *) vl->plugin_instance;
-      data_bind[3].buffer_length = strlen (vl->plugin_instance);
-      data_bind[4].buffer_type = MYSQL_TYPE_LONG;
-      data_bind[4].buffer = (void *) &type_id;
-      data_bind[5].buffer_type = MYSQL_TYPE_STRING;
-      data_bind[5].buffer = (void *) vl->type_instance;
-      data_bind[5].buffer_length = strlen (vl->type_instance);
-      data_bind[6].buffer_type = MYSQL_TYPE_LONG;
-      data_bind[6].buffer = (void *) &dataset_id;
-      if (dso->type == DS_TYPE_GAUGE)
+
+      if (dataset_id == -1)
+        return -1;
+
+      wm_cdtime_t_to_mysql_time (vl->time, &mysql_date);
+
+      memset (binding, 0, sizeof (binding));
+      binding[0].buffer_type = MYSQL_TYPE_DATETIME;
+      binding[0].buffer = (char *) &mysql_date;
+      binding[1].buffer_type = MYSQL_TYPE_LONG;
+      binding[1].buffer = (void *) &host_id;
+      binding[2].buffer_type = MYSQL_TYPE_LONG;
+      binding[2].buffer = (void *) &plugin_id;
+      binding[3].buffer_type = MYSQL_TYPE_STRING;
+      binding[3].buffer = (void *) vl->plugin_instance;
+      binding[3].buffer_length = strlen (vl->plugin_instance);
+      binding[4].buffer_type = MYSQL_TYPE_LONG;
+      binding[4].buffer = (void *) &type_id;
+      binding[5].buffer_type = MYSQL_TYPE_STRING;
+      binding[5].buffer = (void *) vl->type_instance;
+      binding[5].buffer_length = strlen (vl->type_instance);
+      binding[6].buffer_type = MYSQL_TYPE_LONG;
+      binding[6].buffer = (void *) &dataset_id;
+      if (dsrc->type == DS_TYPE_GAUGE)
 	{
-	  data_bind[7].buffer_type = MYSQL_TYPE_DOUBLE;
-	  data_bind[7].buffer = (void *) &(vl->values[i].gauge);
+	  binding[7].buffer_type = MYSQL_TYPE_DOUBLE;
+	  binding[7].buffer = (void *) &(vl->values[i].gauge);
 
 	}
       else
@@ -579,15 +591,17 @@ write_mysql_write (const data_set_t * ds, const value_list_t * vl,
 	    {
 	      rates = uc_get_rate (ds, vl);
 	    }
-	  if (rates == NULL || isnan (rates[i]))
+	  if (rates == NULL)
 	    {
-	      pthread_mutex_unlock (&mutexdb);
 	      sfree (rates);
 	      continue;
 	    }
-	  data_bind[7].buffer_type = MYSQL_TYPE_DOUBLE;
-	  data_bind[7].buffer = (void *) &(rates[i]);
+	  binding[7].buffer_type = MYSQL_TYPE_DOUBLE;
+	  binding[7].buffer = (void *) &(rates[i]);
 	}
+
+      pthread_mutex_lock (&mutexdb);
+
       if (mysql_ping (conn) != 0)
 	{
 	  ERROR
@@ -597,7 +611,7 @@ write_mysql_write (const data_set_t * ds, const value_list_t * vl,
 	  sfree (rates);
 	  return -1;
 	}
-      if (mysql_stmt_bind_param (data_stmt, data_bind) != 0)
+      if (mysql_stmt_bind_param (data_stmt, binding) != 0)
 	{
 	  ERROR
 	    ("write_mysql plugin: Failed to bind param to statement : %s / %s",
@@ -611,7 +625,7 @@ write_mysql_write (const data_set_t * ds, const value_list_t * vl,
 	  // Try to re-prepare statement
 	  data_stmt = mysql_stmt_init (conn);
 	  mysql_stmt_prepare (data_stmt, data_query, strlen (data_query));
-	  mysql_stmt_bind_param (data_stmt, data_bind);
+	  mysql_stmt_bind_param (data_stmt, binding);
 	  if (mysql_stmt_execute (data_stmt) != 0)
 	    {
 	      ERROR
@@ -635,22 +649,18 @@ notify_write_mysql (const notification_t * n,
 
   int host_id, plugin_id, type_id, len;
   char severity[32];
+  MYSQL_TIME mysql_date;
+
   host_id = get_item_id (n->host, HOST_ITEM);
   plugin_id = get_item_id (n->plugin, PLUGIN_ITEM);
   type_id = get_item_id (n->type, TYPE_ITEM);
-  MYSQL_TIME mysql_date;
-  struct tm *time;
-  time_t timet;
-  timet = CDTIME_T_TO_TIME_T (n->time);
-  time = localtime (&timet);
-  mysql_date.year = time->tm_year + 1900;
-  mysql_date.month = time->tm_mon + 1;
-  mysql_date.day = time->tm_mday;
-  mysql_date.hour = time->tm_hour;
-  mysql_date.minute = time->tm_min;
-  mysql_date.second = time->tm_sec;
+
+  wm_cdtime_t_to_mysql_time (n->time, &mysql_date);
+
+  memset (notif_bind, 0, sizeof (notif_bind));
+
   pthread_mutex_lock (&mutexdb);
-  memset (notif_bind, '\0', sizeof (MYSQL_BIND) * 8);
+
   notif_bind[0].buffer_type = MYSQL_TYPE_DATETIME;
   notif_bind[0].buffer = (char *) &mysql_date;
   notif_bind[0].is_null = 0;
