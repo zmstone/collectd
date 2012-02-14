@@ -23,16 +23,18 @@
 #include "collectd.h"
 #include "plugin.h"
 #include "common.h"
+
+#include "utils_cache.h"
+#include "utils_parse_option.h"
+#include "utils_avltree.c"
+
 #ifdef HAVE_MYSQL_H
 #include <mysql.h>
 #elif defined(HAVE_MYSQL_MYSQL_H)
 #include <mysql/mysql.h>
 #endif
+
 #include <pthread.h>
-#include "utils_cache.h"
-#include "utils_parse_option.h"
-#include "utils_avltree.c"
-#include <time.h>
 
 static c_avl_tree_t *host_tree, *plugin_tree, *type_tree, *dataset_tree =
   NULL;
