@@ -1,6 +1,7 @@
 /**
  * collectd - src/interface.c
- * Copyright (C) 2005-2008  Florian octo Forster
+ * Copyright (C) 2005-2010  Florian octo Forster
+ * Copyright (C) 2009       Manuel Sanmartin
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -18,6 +19,7 @@
  * Authors:
  *   Florian octo Forster <octo at verplant.org>
  *   Sune Marcher <sm at flork.dk>
+ *   Manuel Sanmartin
  **/
 
 #include "collectd.h"
@@ -51,6 +53,11 @@
 # include <statgrab.h>
 #endif
 
+#if HAVE_PERFSTAT
+# include <sys/protosw.h>
+# include <libperfstat.h>
+#endif
+
 /*
  * Various people have reported problems with `getifaddrs' and varying versions
  * of `glibc'. That's why it's disabled by default. Since more statistics are
@@ -63,7 +70,13 @@
 # endif /* !COLLECT_GETIFADDRS */
 #endif /* KERNEL_LINUX */
 
-#if !HAVE_GETIFADDRS && !KERNEL_LINUX && !HAVE_LIBKSTAT && !HAVE_LIBSTATGRAB
+#if HAVE_PERFSTAT
+static perfstat_netinterface_t *ifstat;
+static int nif;
+static int pnif;
+#endif /* HAVE_PERFSTAT */
+
+#if !HAVE_GETIFADDRS && !KERNEL_LINUX && !HAVE_LIBKSTAT && !HAVE_LIBSTATGRAB && !HAVE_PERFSTAT
 # error "No applicable input method."
 #endif
 
@@ -115,7 +128,7 @@ static int interface_config (const char *key, const char *value)
 static int interface_init (void)
 {
 	kstat_t *ksp_chain;
-	unsigned long long val;
+	derive_t val;
 
 	numif = 0;
 
@@ -142,8 +155,8 @@ static int interface_init (void)
 #endif /* HAVE_LIBKSTAT */
 
 static void if_submit (const char *dev, const char *type,
-		unsigned long long rx,
-		unsigned long long tx)
+		derive_t rx,
+		derive_t tx)
 {
 	value_t values[2];
 	value_list_t vl = VALUE_LIST_INIT;
@@ -151,15 +164,15 @@ static void if_submit (const char *dev, const char *type,
 	if (ignorelist_match (ignorelist, dev) != 0)
 		return;
 
-	values[0].counter = rx;
-	values[1].counter = tx;
+	values[0].derive = rx;
+	values[1].derive = tx;
 
 	vl.values = values;
 	vl.values_len = 2;
 	sstrncpy (vl.host, hostname_g, sizeof (vl.host));
 	sstrncpy (vl.plugin, "interface", sizeof (vl.plugin));
+	sstrncpy (vl.plugin_instance, dev, sizeof (vl.plugin_instance));
 	sstrncpy (vl.type, type, sizeof (vl.type));
-	sstrncpy (vl.type_instance, dev, sizeof (vl.type_instance));
 
 	plugin_dispatch_values (&vl);
 } /* void if_submit */
@@ -220,9 +233,9 @@ static int interface_read (void)
 #elif KERNEL_LINUX
 	FILE *fh;
 	char buffer[1024];
-	unsigned long long incoming, outgoing;
+	derive_t incoming, outgoing;
 	char *device;
-	
+
 	char *dummy;
 	char *fields[16];
 	int numfields;
@@ -248,7 +261,7 @@ static int interface_read (void)
 
 		if (device[0] == '\0')
 			continue;
-		
+
 		numfields = strsplit (dummy, fields, 16);
 
 		if (numfields < 11)
@@ -272,8 +285,8 @@ static int interface_read (void)
 
 #elif HAVE_LIBKSTAT
 	int i;
-	unsigned long long rx;
-	unsigned long long tx;
+	derive_t rx;
+	derive_t tx;
 
 	if (kc == NULL)
 		return (-1);
@@ -283,16 +296,29 @@ static int interface_read (void)
 		if (kstat_read (kc, ksp[i], NULL) == -1)
 			continue;
 
-		rx = get_kstat_value (ksp[i], "rbytes");
-		tx = get_kstat_value (ksp[i], "obytes");
+		/* try to get 64bit counters */
+		rx = get_kstat_value (ksp[i], "rbytes64");
+		tx = get_kstat_value (ksp[i], "obytes64");
+		/* or fallback to 32bit */
+		if (rx == -1LL)
+			rx = get_kstat_value (ksp[i], "rbytes");
+		if (tx == -1LL)
+			tx = get_kstat_value (ksp[i], "obytes");
 		if ((rx != -1LL) || (tx != -1LL))
 			if_submit (ksp[i]->ks_name, "if_octets", rx, tx);
 
-		rx = get_kstat_value (ksp[i], "ipackets");
-		tx = get_kstat_value (ksp[i], "opackets");
+		/* try to get 64bit counters */
+		rx = get_kstat_value (ksp[i], "ipackets64");
+		tx = get_kstat_value (ksp[i], "opackets64");
+		/* or fallback to 32bit */
+		if (rx == -1LL)
+			rx = get_kstat_value (ksp[i], "ipackets");
+		if (tx == -1LL)
+			tx = get_kstat_value (ksp[i], "opackets");
 		if ((rx != -1LL) || (tx != -1LL))
 			if_submit (ksp[i]->ks_name, "if_packets", rx, tx);
 
+		/* no 64bit error counters yet */
 		rx = get_kstat_value (ksp[i], "ierrors");
 		tx = get_kstat_value (ksp[i], "oerrors");
 		if ((rx != -1LL) || (tx != -1LL))
@@ -308,7 +334,44 @@ static int interface_read (void)
 
 	for (i = 0; i < num; i++)
 		if_submit (ios[i].interface_name, "if_octets", ios[i].rx, ios[i].tx);
-#endif /* HAVE_LIBSTATGRAB */
+/* #endif HAVE_LIBSTATGRAB */
+
+#elif defined(HAVE_PERFSTAT)
+	perfstat_id_t id;
+	int i, ifs;
+
+	if ((nif =  perfstat_netinterface(NULL, NULL, sizeof(perfstat_netinterface_t), 0)) < 0)
+	{
+		char errbuf[1024];
+		WARNING ("interface plugin: perfstat_netinterface: %s",
+			sstrerror (errno, errbuf, sizeof (errbuf)));
+		return (-1);
+	}
+
+	if (pnif != nif || ifstat == NULL)
+	{
+		if (ifstat != NULL)
+			free(ifstat);
+		ifstat = malloc(nif * sizeof(perfstat_netinterface_t));
+	}
+	pnif = nif;
+
+	id.name[0]='\0';
+	if ((ifs = perfstat_netinterface(&id, ifstat, sizeof(perfstat_netinterface_t), nif)) < 0)
+	{
+		char errbuf[1024];
+		WARNING ("interface plugin: perfstat_netinterface (interfaces=%d): %s",
+			nif, sstrerror (errno, errbuf, sizeof (errbuf)));
+		return (-1);
+	}
+
+	for (i = 0; i < ifs; i++)
+	{
+		if_submit (ifstat[i].name, "if_octets", ifstat[i].ibytes, ifstat[i].obytes);
+		if_submit (ifstat[i].name, "if_packets", ifstat[i].ipackets ,ifstat[i].opackets);
+		if_submit (ifstat[i].name, "if_errors", ifstat[i].ierrors, ifstat[i].oerrors );
+	}
+#endif /* HAVE_PERFSTAT */
 
 	return (0);
 } /* int interface_read */

@@ -15,6 +15,9 @@ Sebastian "tokkee" Harl <sh at tokkee.org>
 Contributors (sorted alphabetically)
 ====================================
 
+Akkarit Sangpetch <asangpet at andrew.cmu.edu>
+ - write_mongodb plugin.
+
 Alessandro Iurlano <alessandro.iurlano at gmail.com>
  - Initial filecount plugin.
 
@@ -23,6 +26,7 @@ Alvaro Barcellos <alvaro.barcellos at gmail.com>
 
 Amit Gupta <amit.gupta221 at gmail.com>
  - Multiple servers in the apache plugin.
+ - curl_xml plugin.
 
 Anthony Dewhurst <dewhurst at gmail.com>
  - zfs_arc plugin.
@@ -33,15 +37,25 @@ Anthony Gialluca <tonyabg at charter.net>
 Antony Dovgal <tony at daylessday.org>
  - memcached plugin.
 
+Aurélien Reynaud <collectd at wattapower.net>
+ - LPAR plugin.
+ - Various fixes for AIX, HP-UX and Solaris.
+
 Bruno Prémont <bonbons at linux-vserver.org>
  - BIND plugin.
  - Many bugreports and -fixes in various plugins,
    especially a nasty bug in the network plugin.
  - Wireshark dissector.
 
+Chris Lundquist <clundquist at bluebox.net>
+ - Improvements to the write_mongodb plugin.
+
 Christophe Kalt <collectd at klb.taranis.org>
  - The version 3 `log' mode.
  - Many Solaris related hints and fixes.
+
+Cyril Feraudet <cyril at feraudet.com>
+ - ethstat plugin.
 
 Dan Berrange <berrange at redhat.com>
  - uuid plugin.
@@ -62,6 +76,9 @@ Edward “Koko” Konetzko <konetzed at quixoticagony.com>
 Fabian Linzberger <e at lefant.net>
  - Percentage aggregation for `collectd-nagios'.
 
+Fabien Wernli <cpan at faxm0dem.org>
+ - Solaris improvements in the memory and interfaces plugin.
+
 Flavio Stanchina <flavio at stanchina.net>
  - mbmon plugin.
 
@@ -70,6 +87,9 @@ Franck Lombardi
 
 Jason Pepas <cell at ices.utexas.edu>
  - nfs plugin.
+
+Jérôme Renard <jerome.renard at gmail.com>
+ - varnish plugin.
 
 Luboš Staněk <kolektor at atlas.cz>
  - sensors plugin improvements.
@@ -82,9 +102,24 @@ Luke Herberling <collectd at c-ware.com>
 Lyonel Vincent <lyonel at ezix.org>
  - processes plugin.
 
+Manuel Sanmartin
+ - AIX port of the following plugins:
+   + cpu
+   + disk
+   + interface
+   + load
+   + memory
+   + processes
+   + swap
+ - Various AIX-related fixes and hacks.
+
 Marco Chiappero <marco at absence.it>
  - uptime plugin.
  - ip6tables support in the iptables plugin.
+ - openvpn plugin (support for more status file formats)
+
+Michael Hanselmann <public at hansmi.ch>
+ - md plugin.
 
 Michael Stapelberg <michael+git at stapelberg.de>
  - OpenBSD port of the tcpconns plugin.
@@ -127,6 +162,9 @@ Peter Holik <peter at holik.at>
  - Some bugfixes in the exec plugin.
  - Notifications in the ipmi plugin.
 
+Phoenix Kayo <kayo.k11.4 at gmail.com>
+ - pinba plugin.
+
 Piotr Hosowicz <the55 at wp.pl>
  - SMF manifest for collectd.
 
@@ -143,6 +181,12 @@ Rodolphe Quiédeville <rquiedeville at bearstech.com>
 Scott Garrett <sgarrett at technomancer.com>
  - tape plugin.
 
+Scott Sanders <scott at jssjr.com>
+ - Write-Graphite plugin.
+
+Sebastien Pahl <sebastien.pahl at dotcloud.com>
+ - AMQP plugin.
+
 Simon Kuhnle <simon at blarzwurst.de>
  - OpenBSD code for the cpu and memory plugins.
 
@@ -154,6 +198,7 @@ Stefan Hacker <stefan.hacker at web.de>
 
 Sven Trenkel <collectd at semidefinite.de>
  - netapp plugin.
+ - python plugin.
 
 Tomasz Pala <gotar at pld-linux.org>
  - conntrack plugin.

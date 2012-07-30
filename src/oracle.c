@@ -1,6 +1,7 @@
 /**
  * collectd - src/oracle.c
- * Copyright (C) 2008,2009  Florian octo Forster
+ * Copyright (C) 2008,2009  noris network AG
+ * Copyright (C) 2012       Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -41,7 +42,7 @@
  * affiliates. Other names may be trademarks of their respective owners.
  *
  * Authors:
- *   Florian octo Forster <octo at noris.net>
+ *   Florian octo Forster <octo at collectd.org>
  **/
 
 #include "collectd.h"
@@ -58,10 +59,12 @@
 struct o_database_s
 {
   char *name;
+  char *host;
   char *connect_id;
   char *username;
   char *password;
 
+  udb_query_preparation_area_t **q_prep_areas;
   udb_query_t **queries;
   size_t        queries_num;
 
@@ -89,38 +92,52 @@ static void o_report_error (const char *where, /* {{{ */
   char buffer[2048];
   sb4 error_code;
   int status;
+  unsigned int record_number;
 
-  status = OCIErrorGet (eh, /* record number = */ 1,
-      /* sqlstate = */ NULL,
-      &error_code,
-      (text *) &buffer[0],
-      (ub4) sizeof (buffer),
-      OCI_HTYPE_ERROR);
-  buffer[sizeof (buffer) - 1] = 0;
-
-  if (status == OCI_SUCCESS)
+  /* An operation may cause / return multiple errors. Loop until we have
+   * handled all errors available (with a fail-save limit of 16). */
+  for (record_number = 1; record_number <= 16; record_number++)
   {
-    size_t buffer_length;
+    memset (buffer, 0, sizeof (buffer));
+    error_code = -1;
 
-    buffer_length = strlen (buffer);
-    while ((buffer_length > 0) && (buffer[buffer_length - 1] < 32))
+    status = OCIErrorGet (eh, (ub4) record_number,
+        /* sqlstate = */ NULL,
+        &error_code,
+        (text *) &buffer[0],
+        (ub4) sizeof (buffer),
+        OCI_HTYPE_ERROR);
+    buffer[sizeof (buffer) - 1] = 0;
+
+    if (status == OCI_NO_DATA)
+      return;
+
+    if (status == OCI_SUCCESS)
     {
-      buffer_length--;
-      buffer[buffer_length] = 0;
-    }
+      size_t buffer_length;
 
-    ERROR ("oracle plugin: %s: %s failed: %s",
-        where, what, buffer);
-  }
-  else
-  {
-    ERROR ("oracle plugin: %s: %s failed. Additionally, OCIErrorGet failed with status %i.",
-        where, what, status);
+      buffer_length = strlen (buffer);
+      while ((buffer_length > 0) && (buffer[buffer_length - 1] < 32))
+      {
+        buffer_length--;
+        buffer[buffer_length] = 0;
+      }
+
+      ERROR ("oracle plugin: %s: %s failed: %s", where, what, buffer);
+    }
+    else
+    {
+      ERROR ("oracle plugin: %s: %s failed. Additionally, OCIErrorGet failed with status %i.",
+          where, what, status);
+      return;
+    }
   }
 } /* }}} void o_report_error */
 
 static void o_database_free (o_database_t *db) /* {{{ */
 {
+  size_t i;
+
   if (db == NULL)
     return;
 
@@ -129,6 +146,11 @@ static void o_database_free (o_database_t *db) /* {{{ */
   sfree (db->username);
   sfree (db->password);
   sfree (db->queries);
+
+  if (db->q_prep_areas != NULL)
+    for (i = 0; i < db->queries_num; ++i)
+      udb_query_delete_preparation_area (db->q_prep_areas[i]);
+  free (db->q_prep_areas);
 
   sfree (db);
 } /* }}} void o_database_free */
@@ -154,33 +176,6 @@ static void o_database_free (o_database_t *db) /* {{{ */
  * </Plugin>
  */
 
-static int o_config_set_string (char **ret_string, /* {{{ */
-    oconfig_item_t *ci)
-{
-  char *string;
-
-  if ((ci->values_num != 1)
-      || (ci->values[0].type != OCONFIG_TYPE_STRING))
-  {
-    WARNING ("oracle plugin: The `%s' config option "
-        "needs exactly one string argument.", ci->key);
-    return (-1);
-  }
-
-  string = strdup (ci->values[0].value.string);
-  if (string == NULL)
-  {
-    ERROR ("oracle plugin: strdup failed.");
-    return (-1);
-  }
-
-  if (*ret_string != NULL)
-    free (*ret_string);
-  *ret_string = string;
-
-  return (0);
-} /* }}} int o_config_set_string */
-
 static int o_config_add_database (oconfig_item_t *ci) /* {{{ */
 {
   o_database_t *db;
@@ -202,8 +197,13 @@ static int o_config_add_database (oconfig_item_t *ci) /* {{{ */
     return (-1);
   }
   memset (db, 0, sizeof (*db));
+  db->name = NULL;
+  db->host = NULL;
+  db->connect_id = NULL;
+  db->username = NULL;
+  db->password = NULL;
 
-  status = o_config_set_string (&db->name, ci);
+  status = cf_util_get_string (ci, &db->name);
   if (status != 0)
   {
     sfree (db);
@@ -216,11 +216,13 @@ static int o_config_add_database (oconfig_item_t *ci) /* {{{ */
     oconfig_item_t *child = ci->children + i;
 
     if (strcasecmp ("ConnectID", child->key) == 0)
-      status = o_config_set_string (&db->connect_id, child);
+      status = cf_util_get_string (child, &db->connect_id);
+    else if (strcasecmp ("Host", child->key) == 0)
+      status = cf_util_get_string (child, &db->host);
     else if (strcasecmp ("Username", child->key) == 0)
-      status = o_config_set_string (&db->username, child);
+      status = cf_util_get_string (child, &db->username);
     else if (strcasecmp ("Password", child->key) == 0)
-      status = o_config_set_string (&db->password, child);
+      status = cf_util_get_string (child, &db->password);
     else if (strcasecmp ("Query", child->key) == 0)
       status = udb_query_pick_from_list (child, queries, queries_num,
           &db->queries, &db->queries_num);
@@ -255,6 +257,34 @@ static int o_config_add_database (oconfig_item_t *ci) /* {{{ */
 
     break;
   } /* while (status == 0) */
+
+  while ((status == 0) && (db->queries_num > 0))
+  {
+    db->q_prep_areas = (udb_query_preparation_area_t **) calloc (
+        db->queries_num, sizeof (*db->q_prep_areas));
+
+    if (db->q_prep_areas == NULL)
+    {
+      WARNING ("oracle plugin: malloc failed");
+      status = -1;
+      break;
+    }
+
+    for (i = 0; i < db->queries_num; ++i)
+    {
+      db->q_prep_areas[i]
+        = udb_query_allocate_preparation_area (db->queries[i]);
+
+      if (db->q_prep_areas[i] == NULL)
+      {
+        WARNING ("oracle plugin: udb_query_allocate_preparation_area failed");
+        status = -1;
+        break;
+      }
+    }
+
+    break;
+  }
 
   /* If all went well, add this query to the list of queries within the
    * database structure. */
@@ -295,7 +325,7 @@ static int o_config (oconfig_item_t *ci) /* {{{ */
     oconfig_item_t *child = ci->children + i;
     if (strcasecmp ("Query", child->key) == 0)
       udb_query_create (&queries, &queries_num, child,
-          /* callback = */ NULL, /* legacy mode = */ 0);
+          /* callback = */ NULL);
     else if (strcasecmp ("Database", child->key) == 0)
       o_config_add_database (child);
     else
@@ -349,7 +379,7 @@ static int o_init (void) /* {{{ */
 } /* }}} int o_init */
 
 static int o_read_database_query (o_database_t *db, /* {{{ */
-    udb_query_t *q)
+    udb_query_t *q, udb_query_preparation_area_t *prep_area)
 {
   char **column_names;
   char **column_values;
@@ -519,10 +549,14 @@ static int o_read_database_query (o_database_t *db, /* {{{ */
         &column_name, &column_name_length, OCI_ATTR_NAME, oci_error);
     if (status != OCI_SUCCESS)
     {
+      OCIDescriptorFree (oci_param, OCI_DTYPE_PARAM);
       o_report_error ("o_read_database_query", "OCIAttrGet (OCI_ATTR_NAME)",
           oci_error);
       continue;
     }
+
+    OCIDescriptorFree (oci_param, OCI_DTYPE_PARAM);
+    oci_param = NULL;
 
     /* Copy the name to column_names. Warning: The ``string'' returned by OCI
      * may not be null terminated! */
@@ -548,8 +582,10 @@ static int o_read_database_query (o_database_t *db, /* {{{ */
   } /* for (j = 1; j <= param_counter; j++) */
   /* }}} End of the ``define'' stuff. */
 
-  status = udb_query_prepare_result (q, hostname_g, /* plugin = */ "oracle",
-      db->name, column_names, column_num);
+  status = udb_query_prepare_result (q, prep_area,
+      (db->host != NULL) ? db->host : hostname_g,
+      /* plugin = */ "oracle", db->name, column_names, column_num,
+      /* interval = */ 0);
   if (status != 0)
   {
     ERROR ("oracle plugin: o_read_database_query (%s, %s): "
@@ -576,7 +612,7 @@ static int o_read_database_query (o_database_t *db, /* {{{ */
       break;
     }
 
-    status = udb_query_handle_result (q, column_values);
+    status = udb_query_handle_result (q, prep_area, column_values);
     if (status != 0)
     {
       WARNING ("oracle plugin: o_read_database_query (%s, %s): "
@@ -598,6 +634,47 @@ static int o_read_database (o_database_t *db) /* {{{ */
   size_t i;
   int status;
 
+  if (db->oci_service_context != NULL)
+  {
+    OCIServer *server_handle;
+    ub4 connection_status;
+
+    server_handle = NULL;
+    status = OCIAttrGet ((void *) db->oci_service_context, OCI_HTYPE_SVCCTX, 
+        (void *) &server_handle, /* size pointer = */ NULL,
+        OCI_ATTR_SERVER, oci_error);
+    if (status != OCI_SUCCESS)
+    {
+      o_report_error ("o_read_database", "OCIAttrGet", oci_error);
+      return (-1);
+    }
+
+    if (server_handle == NULL)
+    {
+      connection_status = OCI_SERVER_NOT_CONNECTED;
+    }
+    else /* if (server_handle != NULL) */
+    {
+      connection_status = 0;
+      status = OCIAttrGet ((void *) server_handle, OCI_HTYPE_SERVER,
+          (void *) &connection_status, /* size pointer = */ NULL,
+          OCI_ATTR_SERVER_STATUS, oci_error);
+      if (status != OCI_SUCCESS)
+      {
+        o_report_error ("o_read_database", "OCIAttrGet", oci_error);
+        return (-1);
+      }
+    }
+
+    if (connection_status != OCI_SERVER_NORMAL)
+    {
+      INFO ("oracle plugin: Connection to %s lost. Trying to reconnect.",
+          db->name);
+      OCIHandleFree (db->oci_service_context, OCI_HTYPE_SVCCTX);
+      db->oci_service_context = NULL;
+    }
+  } /* if (db->oci_service_context != NULL) */
+
   if (db->oci_service_context == NULL)
   {
     status = OCILogon (oci_env, oci_error,
@@ -605,13 +682,17 @@ static int o_read_database (o_database_t *db) /* {{{ */
         (OraText *) db->username, (ub4) strlen (db->username),
         (OraText *) db->password, (ub4) strlen (db->password),
         (OraText *) db->connect_id, (ub4) strlen (db->connect_id));
-    if (status != OCI_SUCCESS)
+    if ((status != OCI_SUCCESS) && (status != OCI_SUCCESS_WITH_INFO))
     {
       o_report_error ("o_read_database", "OCILogon", oci_error);
       DEBUG ("oracle plugin: OCILogon (%s): db->oci_service_context = %p;",
           db->connect_id, db->oci_service_context);
       db->oci_service_context = NULL;
       return (-1);
+    }
+    else if (status == OCI_SUCCESS_WITH_INFO)
+    {
+      /* TODO: Print NOTIFY message. */
     }
     assert (db->oci_service_context != NULL);
   }
@@ -620,7 +701,7 @@ static int o_read_database (o_database_t *db) /* {{{ */
       db->connect_id, db->oci_service_context);
 
   for (i = 0; i < db->queries_num; i++)
-    o_read_database_query (db, db->queries[i]);
+    o_read_database_query (db, db->queries[i], db->q_prep_areas[i]);
 
   return (0);
 } /* }}} int o_read_database */
@@ -659,6 +740,7 @@ static int o_shutdown (void) /* {{{ */
   }
   
   OCIHandleFree (oci_env, OCI_HTYPE_ENV);
+  oci_env = NULL;
 
   udb_query_free (queries, queries_num);
   queries = NULL;

@@ -1,6 +1,6 @@
 /**
  * collectd - src/mysql.c
- * Copyright (C) 2006-2009  Florian octo Forster
+ * Copyright (C) 2006-2010  Florian octo Forster
  * Copyright (C) 2008       Mirko Buffoni
  * Copyright (C) 2009       Doug MacEachern
  * Copyright (C) 2009       Sebastian tokkee Harl
@@ -20,7 +20,7 @@
  * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  *
  * Authors:
- *   Florian octo Forster <octo at verplant.org>
+ *   Florian octo Forster <octo at collectd.org>
  *   Mirko Buffoni <briareos at eswat.org>
  *   Doug MacEachern <dougm at hyperic.com>
  *   Sebastian tokkee Harl <sh at tokkee.org>
@@ -42,7 +42,6 @@
 
 struct mysql_database_s /* {{{ */
 {
-	/* instance == NULL  =>  legacy mode */
 	char *instance;
 	char *host;
 	char *user;
@@ -51,12 +50,12 @@ struct mysql_database_s /* {{{ */
 	char *socket;
 	int   port;
 
-	int   master_stats;
-	int   slave_stats;
+	_Bool master_stats;
+	_Bool slave_stats;
 
-	int   slave_notif;
-	int   slave_io_running;
-	int   slave_sql_running;
+	_Bool slave_notif;
+	_Bool slave_io_running;
+	_Bool slave_sql_running;
 
 	MYSQL *con;
 	int    state;
@@ -98,88 +97,9 @@ static void mysql_database_free (void *arg) /* {{{ */
  *   </Database>
  * </Plugin>
  */
-
-static int mysql_config_set_string (char **ret_string, /* {{{ */
-				    oconfig_item_t *ci)
-{
-	char *string;
-
-	if ((ci->values_num != 1)
-	    || (ci->values[0].type != OCONFIG_TYPE_STRING))
-	{
-		WARNING ("mysql plugin: The `%s' config option "
-			 "needs exactly one string argument.", ci->key);
-		return (-1);
-	}
-
-	string = strdup (ci->values[0].value.string);
-	if (string == NULL)
-	{
-		ERROR ("mysql plugin: strdup failed.");
-		return (-1);
-	}
-
-	if (*ret_string != NULL)
-		free (*ret_string);
-	*ret_string = string;
-
-	return (0);
-} /* }}} int mysql_config_set_string */
-
-static int mysql_config_set_int (int *ret_int, /* {{{ */
-				 oconfig_item_t *ci)
-{
-	if ((ci->values_num != 1)
-	    || (ci->values[0].type != OCONFIG_TYPE_NUMBER))
-	{
-		WARNING ("mysql plugin: The `%s' config option "
-			 "needs exactly one string argument.", ci->key);
-		return (-1);
-	}
-
-	*ret_int = ci->values[0].value.number;
-
-	return (0);
-} /* }}} int mysql_config_set_int */
-
-static int mysql_config_set_boolean (int *ret_boolean, /* {{{ */
-				oconfig_item_t *ci)
-{
-	int status = 0;
-
-	if (ci->values_num != 1)
-		status = -1;
-
-	if (status == 0)
-	{
-		if (ci->values[0].type == OCONFIG_TYPE_BOOLEAN)
-			*ret_boolean = ci->values[0].value.boolean;
-		else if (ci->values[0].type == OCONFIG_TYPE_STRING)
-		{
-			if (IS_TRUE (ci->values[0].value.string))
-				*ret_boolean = 1;
-			else if (IS_FALSE (ci->values[0].value.string))
-				*ret_boolean = 0;
-			else
-				status = -1;
-		}
-		else
-			status = -1;
-	}
-
-	if (status != 0)
-	{
-		WARNING ("mysql plugin: The `%s' config option "
-			"needs exactly one boolean argument.", ci->key);
-		return (-1);
-	}
-	return (0);
-} /* }}} mysql_config_set_boolean */
-
-static int mysql_config (oconfig_item_t *ci) /* {{{ */
+static int mysql_config_database (oconfig_item_t *ci) /* {{{ */
 {
 	mysql_database_t *db;
-	int plugin_block;
 	int status = 0;
 	int i;
 
@@ -211,28 +131,13 @@ static int mysql_config (oconfig_item_t *ci) /* {{{ */
 	db->slave_io_running  = 1;
 	db->slave_sql_running = 1;
 
-	plugin_block = 1;
-	if (strcasecmp ("Plugin", ci->key) == 0)
+	status = cf_util_get_string (ci, &db->instance);
+	if (status != 0)
 	{
-		db->instance = NULL;
+		sfree (db);
+		return (status);
 	}
-	else if (strcasecmp ("Database", ci->key) == 0)
-	{
-		plugin_block = 0;
-		status = mysql_config_set_string (&db->instance, ci);
-		if (status != 0)
-		{
-			sfree (db);
-			return (status);
-		}
-		assert (db->instance != NULL);
-	}
-	else
-	{
-		ERROR ("mysql plugin: mysql_config: "
-				"Invalid key: %s", ci->key);
-		return (-1);
-	}
+	assert (db->instance != NULL);
 
 	/* Fill the `mysql_database_t' structure.. */
 	for (i = 0; i < ci->children_num; i++)
@@ -240,36 +145,30 @@ static int mysql_config (oconfig_item_t *ci) /* {{{ */
 		oconfig_item_t *child = ci->children + i;
 
 		if (strcasecmp ("Host", child->key) == 0)
-			status = mysql_config_set_string (&db->host, child);
+			status = cf_util_get_string (child, &db->host);
 		else if (strcasecmp ("User", child->key) == 0)
-			status = mysql_config_set_string (&db->user, child);
+			status = cf_util_get_string (child, &db->user);
 		else if (strcasecmp ("Password", child->key) == 0)
-			status = mysql_config_set_string (&db->pass, child);
+			status = cf_util_get_string (child, &db->pass);
 		else if (strcasecmp ("Port", child->key) == 0)
-			status = mysql_config_set_int (&db->port, child);
-		else if (strcasecmp ("Socket", child->key) == 0)
-			status = mysql_config_set_string (&db->socket, child);
-		/* Check if we're currently handling the `Plugin' block. If so,
-		 * handle `Database' _blocks_, too. */
-		else if ((plugin_block != 0)
-				&& (strcasecmp ("Database", child->key) == 0)
-				&& (child->children != NULL))
 		{
-			/* If `plugin_block > 1', there has been at least one
-			 * `Database' block */
-			plugin_block++;
-			status = mysql_config (child);
+			status = cf_util_get_port_number (child);
+			if (status > 0)
+			{
+				db->port = status;
+				status = 0;
+			}
 		}
-		/* Now handle ordinary `Database' options (without children) */
-		else if ((strcasecmp ("Database", child->key) == 0)
-				&& (child->children == NULL))
-			status = mysql_config_set_string (&db->database, child);
+		else if (strcasecmp ("Socket", child->key) == 0)
+			status = cf_util_get_string (child, &db->socket);
+		else if (strcasecmp ("Database", child->key) == 0)
+			status = cf_util_get_string (child, &db->database);
 		else if (strcasecmp ("MasterStats", child->key) == 0)
-			status = mysql_config_set_boolean (&db->master_stats, child);
+			status = cf_util_get_boolean (child, &db->master_stats);
 		else if (strcasecmp ("SlaveStats", child->key) == 0)
-			status = mysql_config_set_boolean (&db->slave_stats, child);
+			status = cf_util_get_boolean (child, &db->slave_stats);
 		else if (strcasecmp ("SlaveNotifications", child->key) == 0)
-			status = mysql_config_set_boolean (&db->slave_notif, child);
+			status = cf_util_get_boolean (child, &db->slave_notif);
 		else
 		{
 			WARNING ("mysql plugin: Option `%s' not allowed here.", child->key);
@@ -279,49 +178,6 @@ static int mysql_config (oconfig_item_t *ci) /* {{{ */
 		if (status != 0)
 			break;
 	}
-
-	/* Check if there were any `Database' blocks. */
-	if (plugin_block > 1)
-	{
-		/* There were connection blocks. Don't use any legacy stuff. */
-		if ((db->host != NULL)
-			|| (db->user != NULL)
-			|| (db->pass != NULL)
-			|| (db->database != NULL)
-			|| (db->socket != NULL)
-			|| (db->port != 0))
-		{
-			WARNING ("mysql plugin: At least one <Database> "
-					"block has been found. The legacy "
-					"configuration will be ignored.");
-		}
-		mysql_database_free (db);
-		return (0);
-	}
-	else if (plugin_block != 0)
-	{
-		WARNING ("mysql plugin: You're using the legacy "
-				"configuration options. Please consider "
-				"updating your configuration!");
-	}
-
-	/* Check that all necessary options have been given. */
-	while (status == 0)
-	{
-		/* Zero is allowed and automatically handled by
-		 * `mysql_real_connect'. */
-		if ((db->port < 0) || (db->port > 65535))
-		{
-			ERROR ("mysql plugin: Database %s: Port number out "
-					"of range: %i",
-					(db->instance != NULL)
-					? db->instance
-					: "<legacy>",
-					db->port);
-			status = -1;
-		}
-		break;
-	} /* while (status == 0) */
 
 	/* If all went well, register this database for reading */
 	if (status == 0)
@@ -342,13 +198,36 @@ static int mysql_config (oconfig_item_t *ci) /* {{{ */
 		else
 			sstrncpy (cb_name, "mysql", sizeof (cb_name));
 
-		plugin_register_complex_read (cb_name, mysql_read,
+		plugin_register_complex_read (/* group = */ NULL, cb_name,
+					      mysql_read,
 					      /* interval = */ NULL, &ud);
 	}
 	else
 	{
 		mysql_database_free (db);
 		return (-1);
+	}
+
+	return (0);
+} /* }}} int mysql_config_database */
+
+static int mysql_config (oconfig_item_t *ci) /* {{{ */
+{
+	int i;
+
+	if (ci == NULL)
+		return (EINVAL);
+
+	/* Fill the `mysql_database_t' structure.. */
+	for (i = 0; i < ci->children_num; i++)
+	{
+		oconfig_item_t *child = ci->children + i;
+
+		if (strcasecmp ("Database", child->key) == 0)
+			mysql_config_database (child);
+		else
+			WARNING ("mysql plugin: Option \"%s\" not allowed here.",
+					child->key);
 	}
 
 	return (0);
@@ -363,10 +242,10 @@ static MYSQL *getconnection (mysql_database_t *db)
 		int err;
 		if ((err = mysql_ping (db->con)) != 0)
 		{
-			WARNING ("mysql_ping failed for %s: %s",
-					(db->instance != NULL)
-					? db->instance
-					: "<legacy>",
+			/* Assured by "mysql_config_database" */
+			assert (db->instance != NULL);
+			WARNING ("mysql_ping failed for instance \"%s\": %s",
+					db->instance,
 					mysql_error (db->con));
 			db->state = 0;
 		}
@@ -397,7 +276,7 @@ static MYSQL *getconnection (mysql_database_t *db)
 	}
 	else
 	{
-		INFO ("mysql plugin: Sucessfully connected to database %s "
+		INFO ("mysql plugin: Successfully connected to database %s "
 				"at server %s (server version: %s, protocol version: %d)",
 				(db->database != NULL) ? db->database : "<none>",
 				mysql_get_host_info (db->con),
@@ -410,29 +289,13 @@ static MYSQL *getconnection (mysql_database_t *db)
 
 static void set_host (mysql_database_t *db, char *buf, size_t buflen)
 {
-	/* XXX legacy mode - use hostname_g */
-	if (db->instance == NULL)
+	if ((db->host == NULL)
+			|| (strcmp ("", db->host) == 0)
+			|| (strcmp ("localhost", db->host) == 0))
 		sstrncpy (buf, hostname_g, buflen);
 	else
-	{
-		if ((db->host == NULL)
-				|| (strcmp ("", db->host) == 0)
-				|| (strcmp ("localhost", db->host) == 0))
-			sstrncpy (buf, hostname_g, buflen);
-		else
-			sstrncpy (buf, db->host, buflen);
-	}
-}
-
-static void set_plugin_instance (mysql_database_t *db,
-		char *buf, size_t buflen)
-{
-	/* XXX legacy mode - no plugin_instance */
-	if (db->instance == NULL)
-		sstrncpy (buf, "", buflen);
-	else
-		sstrncpy (buf, db->instance, buflen);
-}
+		sstrncpy (buf, db->host, buflen);
+} /* void set_host */
 
 static void submit (const char *type, const char *type_instance,
 		value_t *values, size_t values_len, mysql_database_t *db)
@@ -445,7 +308,10 @@ static void submit (const char *type, const char *type_instance,
 	set_host (db, vl.host, sizeof (vl.host));
 
 	sstrncpy (vl.plugin, "mysql", sizeof (vl.plugin));
-	set_plugin_instance (db, vl.plugin_instance, sizeof (vl.plugin_instance));
+
+	/* Assured by "mysql_config_database" */
+	assert (db->instance != NULL);
+	sstrncpy (vl.plugin_instance, db->instance, sizeof (vl.plugin_instance));
 
 	sstrncpy (vl.type, type, sizeof (vl.type));
 	if (type_instance != NULL)
@@ -455,11 +321,11 @@ static void submit (const char *type, const char *type_instance,
 } /* submit */
 
 static void counter_submit (const char *type, const char *type_instance,
-		counter_t value, mysql_database_t *db)
+		derive_t value, mysql_database_t *db)
 {
 	value_t values[1];
 
-	values[0].counter = value;
+	values[0].derive = value;
 	submit (type, type_instance, values, STATIC_ARRAY_SIZE (values), db);
 } /* void counter_submit */
 
@@ -472,40 +338,21 @@ static void gauge_submit (const char *type, const char *type_instance,
 	submit (type, type_instance, values, STATIC_ARRAY_SIZE (values), db);
 } /* void gauge_submit */
 
-static void qcache_submit (counter_t hits, counter_t inserts,
-		counter_t not_cached, counter_t lowmem_prunes,
-		gauge_t queries_in_cache, mysql_database_t *db)
+static void derive_submit (const char *type, const char *type_instance,
+		derive_t value, mysql_database_t *db)
 {
-	value_t values[5];
+	value_t values[1];
 
-	values[0].counter = hits;
-	values[1].counter = inserts;
-	values[2].counter = not_cached;
-	values[3].counter = lowmem_prunes;
-	values[4].gauge   = queries_in_cache;
+	values[0].derive = value;
+	submit (type, type_instance, values, STATIC_ARRAY_SIZE (values), db);
+} /* void derive_submit */
 
-	submit ("mysql_qcache", NULL, values, STATIC_ARRAY_SIZE (values), db);
-} /* void qcache_submit */
-
-static void threads_submit (gauge_t running, gauge_t connected, gauge_t cached,
-		counter_t created, mysql_database_t *db)
-{
-	value_t values[4];
-
-	values[0].gauge   = running;
-	values[1].gauge   = connected;
-	values[2].gauge   = cached;
-	values[3].counter = created;
-
-	submit ("mysql_threads", NULL, values, STATIC_ARRAY_SIZE (values), db);
-} /* void threads_submit */
-
-static void traffic_submit (counter_t rx, counter_t tx, mysql_database_t *db)
+static void traffic_submit (derive_t rx, derive_t tx, mysql_database_t *db)
 {
 	value_t values[2];
 
-	values[0].counter = rx;
-	values[1].counter = tx;
+	values[0].derive = rx;
+	values[1].derive = tx;
 
 	submit ("mysql_octets", NULL, values, STATIC_ARRAY_SIZE (values), db);
 } /* void traffic_submit */
@@ -638,7 +485,7 @@ static int mysql_read_slave_stats (mysql_database_t *db, MYSQL *con)
 
 	if (db->slave_notif)
 	{
-		notification_t n = { 0, time (NULL), "", "",
+		notification_t n = { 0, cdtime (), "", "",
 			"mysql", "", "time_offset", "", NULL };
 
 		char *io, *sql;
@@ -647,8 +494,10 @@ static int mysql_read_slave_stats (mysql_database_t *db, MYSQL *con)
 		sql = row[SLAVE_SQL_RUNNING_IDX];
 
 		set_host (db, n.host, sizeof (n.host));
-		set_plugin_instance (db,
-				n.plugin_instance, sizeof (n.plugin_instance));
+
+		/* Assured by "mysql_config_database" */
+		assert (db->instance != NULL);
+		sstrncpy (n.plugin_instance, db->instance, sizeof (n.plugin_instance));
 
 		if (((io == NULL) || (strcasecmp (io, "yes") != 0))
 				&& (db->slave_io_running))
@@ -706,18 +555,17 @@ static int mysql_read (user_data_t *ud)
 	MYSQL_RES *res;
 	MYSQL_ROW  row;
 	char      *query;
-	int        field_num;
 
-	unsigned long long qcache_hits          = 0ULL;
-	unsigned long long qcache_inserts       = 0ULL;
-	unsigned long long qcache_not_cached    = 0ULL;
-	unsigned long long qcache_lowmem_prunes = 0ULL;
-	int qcache_queries_in_cache = -1;
+	derive_t qcache_hits          = 0;
+	derive_t qcache_inserts       = 0;
+	derive_t qcache_not_cached    = 0;
+	derive_t qcache_lowmem_prunes = 0;
+	gauge_t qcache_queries_in_cache = NAN;
 
-	int threads_running   = -1;
-	int threads_connected = -1;
-	int threads_cached    = -1;
-	unsigned long long threads_created = 0ULL;
+	gauge_t threads_running   = NAN;
+	gauge_t threads_connected = NAN;
+	gauge_t threads_cached    = NAN;
+	derive_t threads_created = 0;
 
 	unsigned long long traffic_incoming = 0ULL;
 	unsigned long long traffic_outgoing = 0ULL;
@@ -742,7 +590,6 @@ static int mysql_read (user_data_t *ud)
 	if (res == NULL)
 		return (-1);
 
-	field_num = mysql_num_fields (res);
 	while ((row = mysql_fetch_row (res)))
 	{
 		char *key;
@@ -777,15 +624,15 @@ static int mysql_read (user_data_t *ud)
        				        strlen ("Qcache_")) == 0)
 		{
 			if (strcmp (key, "Qcache_hits") == 0)
-				qcache_hits = val;
+				qcache_hits = (derive_t) val;
 			else if (strcmp (key, "Qcache_inserts") == 0)
-				qcache_inserts = val;
+				qcache_inserts = (derive_t) val;
 			else if (strcmp (key, "Qcache_not_cached") == 0)
-				qcache_not_cached = val;
+				qcache_not_cached = (derive_t) val;
 			else if (strcmp (key, "Qcache_lowmem_prunes") == 0)
-				qcache_lowmem_prunes = val;
+				qcache_lowmem_prunes = (derive_t) val;
 			else if (strcmp (key, "Qcache_queries_in_cache") == 0)
-				qcache_queries_in_cache = (int) val;
+				qcache_queries_in_cache = (gauge_t) val;
 		}
 		else if (strncmp (key, "Bytes_", 
 				        strlen ("Bytes_")) == 0)
@@ -799,13 +646,13 @@ static int mysql_read (user_data_t *ud)
        				        strlen ("Threads_")) == 0)
 		{
 			if (strcmp (key, "Threads_running") == 0)
-				threads_running = (int) val;
+				threads_running = (gauge_t) val;
 			else if (strcmp (key, "Threads_connected") == 0)
-				threads_connected = (int) val;
+				threads_connected = (gauge_t) val;
 			else if (strcmp (key, "Threads_cached") == 0)
-				threads_cached = (int) val;
+				threads_cached = (gauge_t) val;
 			else if (strcmp (key, "Threads_created") == 0)
-				threads_created = val;
+				threads_created = (derive_t) val;
 		}
 		else if (strncmp (key, "Table_locks_",
 					strlen ("Table_locks_")) == 0)
@@ -817,16 +664,36 @@ static int mysql_read (user_data_t *ud)
 	}
 	mysql_free_result (res); res = NULL;
 
-	if ((qcache_hits != 0ULL)
-			|| (qcache_inserts != 0ULL)
-			|| (qcache_not_cached != 0ULL)
-			|| (qcache_lowmem_prunes != 0ULL))
-		qcache_submit (qcache_hits, qcache_inserts, qcache_not_cached,
-			       qcache_lowmem_prunes, qcache_queries_in_cache, db);
+	if ((qcache_hits != 0)
+			|| (qcache_inserts != 0)
+			|| (qcache_not_cached != 0)
+			|| (qcache_lowmem_prunes != 0))
+	{
+		derive_submit ("cache_result", "qcache-hits",
+				qcache_hits, db);
+		derive_submit ("cache_result", "qcache-inserts",
+				qcache_inserts, db);
+		derive_submit ("cache_result", "qcache-not_cached",
+				qcache_not_cached, db);
+		derive_submit ("cache_result", "qcache-prunes",
+				qcache_lowmem_prunes, db);
 
-	if (threads_created != 0ULL)
-		threads_submit (threads_running, threads_connected,
-				threads_cached, threads_created, db);
+		gauge_submit ("cache_size", "qcache",
+				qcache_queries_in_cache, db);
+	}
+
+	if (threads_created != 0)
+	{
+		gauge_submit ("threads", "running",
+				threads_running, db);
+		gauge_submit ("threads", "connected",
+				threads_connected, db);
+		gauge_submit ("threads", "cached",
+				threads_cached, db);
+
+		derive_submit ("total_threads", "created",
+				threads_created, db);
+	}
 
 	traffic_submit  (traffic_incoming, traffic_outgoing, db);
 

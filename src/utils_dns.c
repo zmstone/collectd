@@ -118,7 +118,7 @@
 
 #if HAVE_STRUCT_UDPHDR_UH_DPORT && HAVE_STRUCT_UDPHDR_UH_SPORT
 # define UDP_DEST uh_dport
-# define UDP_SRC  uh_dport
+# define UDP_SRC  uh_sport
 #elif HAVE_STRUCT_UDPHDR_DEST && HAVE_STRUCT_UDPHDR_SOURCE
 # define UDP_DEST dest
 # define UDP_SRC  source
@@ -291,13 +291,18 @@ rfc1035NameUnpack(const char *buf, size_t sz, off_t * off, char *name, size_t ns
     off_t no = 0;
     unsigned char c;
     size_t len;
-    assert(ns > 0);
+    static int loop_detect = 0;
+    if (loop_detect > 2)
+	return 4;		/* compression loop */
+    if (ns <= 0)
+	return 4;		/* probably compression loop */
     do {
 	if ((*off) >= sz)
 	    break;
 	c = *(buf + (*off));
 	if (c > 191) {
 	    /* blasted compression */
+	    int rc;
 	    unsigned short s;
 	    off_t ptr;
 	    memcpy(&s, buf + (*off), sizeof(s));
@@ -305,18 +310,23 @@ rfc1035NameUnpack(const char *buf, size_t sz, off_t * off, char *name, size_t ns
 	    (*off) += sizeof(s);
 	    /* Sanity check */
 	    if ((*off) >= sz)
-		return 1;
+		return 1;	/* message too short */
 	    ptr = s & 0x3FFF;
 	    /* Make sure the pointer is inside this message */
 	    if (ptr >= sz)
-		return 2;
-	    return rfc1035NameUnpack(buf, sz, &ptr, name + no, ns - no);
+		return 2;	/* bad compression ptr */
+	    if (ptr < DNS_MSG_HDR_SZ)
+		return 2;	/* bad compression ptr */
+	    loop_detect++;
+	    rc = rfc1035NameUnpack(buf, sz, &ptr, name + no, ns - no);
+	    loop_detect--;
+	    return rc;
 	} else if (c > RFC1035_MAXLABELSZ) {
 	    /*
 	     * "(The 10 and 01 combinations are reserved for future use.)"
 	     */
+	    return 3;		/* reserved label/compression flags */
 	    break;
-	    return 3;
 	} else {
 	    (*off)++;
 	    len = (size_t) c;
@@ -324,15 +334,18 @@ rfc1035NameUnpack(const char *buf, size_t sz, off_t * off, char *name, size_t ns
 		break;
 	    if (len > (ns - 1))
 		len = ns - 1;
-	    if ((*off) + len > sz)	/* message is too short */
-		return 4;
+	    if ((*off) + len > sz)
+		return 4;	/* message is too short */
+	    if (no + len + 1 > ns)
+		return 5;	/* qname would overflow name buffer */
 	    memcpy(name + no, buf + (*off), len);
 	    (*off) += len;
 	    no += len;
 	    *(name + (no++)) = '.';
 	}
     } while (c > 0);
-    *(name + no - 1) = '\0';
+    if (no > 0)
+	*(name + no - 1) = '\0';
     /* make sure we didn't allow someone to overflow the name buffer */
     assert(no <= ns);
     return 0;
@@ -345,10 +358,10 @@ handle_dns(const char *buf, int len)
     uint16_t us;
     off_t offset;
     char *t;
-    int x;
+    int status;
 
     /* The DNS header is 12 bytes long */
-    if (len < 12)
+    if (len < DNS_MSG_HDR_SZ)
 	return 0;
 
     memcpy(&us, buf + 0, 2);
@@ -379,11 +392,15 @@ handle_dns(const char *buf, int len)
     memcpy(&us, buf + 10, 2);
     qh.arcount = ntohs(us);
 
-    offset = 12;
+    offset = DNS_MSG_HDR_SZ;
     memset(qh.qname, '\0', MAX_QNAME_SZ);
-    x = rfc1035NameUnpack(buf, len, &offset, qh.qname, MAX_QNAME_SZ);
-    if (0 != x)
+    status = rfc1035NameUnpack(buf, len, &offset, qh.qname, MAX_QNAME_SZ);
+    if (status != 0)
+    {
+	INFO ("utils_dns: handle_dns: rfc1035NameUnpack failed "
+		"with status %i.", status);
 	return 0;
+    }
     if ('\0' == qh.qname[0])
 	sstrncpy (qh.qname, ".", sizeof (qh.qname));
     while ((t = strchr(qh.qname, '\n')))
@@ -424,6 +441,7 @@ handle_udp(const struct udphdr *udp, int len)
     return 1;
 }
 
+#if HAVE_NETINET_IP6_H
 static int
 handle_ipv6 (struct ip6_hdr *ipv6, int len)
 {
@@ -432,7 +450,6 @@ handle_ipv6 (struct ip6_hdr *ipv6, int len)
     int nexthdr;
 
     struct in6_addr s_addr;
-    struct in6_addr d_addr;
     uint16_t payload_len;
 
     if (0 > len)
@@ -441,7 +458,6 @@ handle_ipv6 (struct ip6_hdr *ipv6, int len)
     offset = sizeof (struct ip6_hdr);
     nexthdr = ipv6->ip6_nxt;
     s_addr = ipv6->ip6_src;
-    d_addr = ipv6->ip6_dst;
     payload_len = ntohs (ipv6->ip6_plen);
 
     if (ignore_list_match (&s_addr))
@@ -495,6 +511,16 @@ handle_ipv6 (struct ip6_hdr *ipv6, int len)
 
     return (1); /* Success */
 } /* int handle_ipv6 */
+/* #endif HAVE_NETINET_IP6_H */
+
+#else /* if !HAVE_NETINET_IP6_H */
+static int
+handle_ipv6 (__attribute__((unused)) void *pkg,
+	__attribute__((unused)) int len)
+{
+    return (0);
+}
+#endif /* !HAVE_NETINET_IP6_H */
 
 static int
 handle_ip(const struct ip *ip, int len)
@@ -505,7 +531,7 @@ handle_ip(const struct ip *ip, int len)
     struct in6_addr d_addr;
 
     if (ip->ip_v == 6)
-	return (handle_ipv6 ((struct ip6_hdr *) ip, len));
+	return (handle_ipv6 ((void *) ip, len));
 
     in6_addr_from_buffer (&s_addr, &ip->ip_src.s_addr, sizeof (ip->ip_src.s_addr), AF_INET);
     in6_addr_from_buffer (&d_addr, &ip->ip_dst.s_addr, sizeof (ip->ip_dst.s_addr), AF_INET);
@@ -603,7 +629,7 @@ handle_ether(const u_char * pkt, int len)
 	return 0;
     memcpy(buf, pkt, len);
     if (ETHERTYPE_IPV6 == etype)
-	return (handle_ipv6 ((struct ip6_hdr *) buf, len));
+	return (handle_ipv6 ((void *) buf, len));
     else
 	return handle_ip((struct ip *) buf, len);
 }
@@ -636,7 +662,7 @@ handle_linux_sll (const u_char *pkt, int len)
 	return 0;
 
     if (ETHERTYPE_IPV6 == etype)
-	return (handle_ipv6 ((struct ip6_hdr *) pkt, len));
+	return (handle_ipv6 ((void *) pkt, len));
     else
 	return handle_ip((struct ip *) pkt, len);
 }
@@ -646,10 +672,6 @@ handle_linux_sll (const u_char *pkt, int len)
 void handle_pcap(u_char *udata, const struct pcap_pkthdr *hdr, const u_char *pkt)
 {
     int status;
-
-    DEBUG ("handle_pcap (udata = %p, hdr = %p, pkt = %p): hdr->caplen = %i\n",
-		    (void *) udata, (void *) hdr, (void *) pkt,
-		    hdr->caplen);
 
     if (hdr->caplen < ETHER_HDR_LEN)
 	return;
@@ -684,7 +706,7 @@ void handle_pcap(u_char *udata, const struct pcap_pkthdr *hdr, const u_char *pkt
 	    break;
 
 	default:
-	    ERROR ("handle_pcap: unsupported data link type %d\n",
+	    ERROR ("handle_pcap: unsupported data link type %d",
 		    pcap_datalink(pcap_obj));
 	    status = 0;
 	    break;

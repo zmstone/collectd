@@ -1,8 +1,8 @@
 /**
  * collectd - src/iptables.c
- * Copyright (C) 2007 Sjoerd van der Berg
- * Copyright (C) 2007 Florian octo Forster
- * Copyright (C) 2009 Marco Chiappero
+ * Copyright (C) 2007       Sjoerd van der Berg
+ * Copyright (C) 2007-2010  Florian octo Forster
+ * Copyright (C) 2009       Marco Chiappero
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -20,7 +20,7 @@
  *
  * Authors:
  *  Sjoerd van der Berg <harekiet at users.sourceforge.net>
- *  Florian Forster <octo at verplant.org>
+ *  Florian Forster <octo at collectd.org>
  *  Marco Chiappero <marco at absence.it>
  **/
 
@@ -31,16 +31,8 @@
 
 #include <sys/socket.h>
 
-#if OWN_LIBIPTC
-# include "owniptc/libiptc.h"
-# include "owniptc/libip6tc.h"
-
-# define HAVE_IPTC_HANDLE_T 1
-# define HAVE_IP6TC_HANDLE_T 1
-
-#else /* if !OWN_LIBIPTC */
-# include <libiptc/libiptc.h>
-# include <libiptc/libip6tc.h>
+#include <libiptc/libiptc.h>
+#include <libiptc/libip6tc.h>
 
 /*
  * iptc_handle_t was available before libiptc was officially available as a
@@ -54,13 +46,12 @@
  * this is somewhat hacky, I didn't find better way to solve that :-/
  * -tokkee
  */
-# ifndef HAVE_IPTC_HANDLE_T
+#ifndef HAVE_IPTC_HANDLE_T
 typedef struct iptc_handle iptc_handle_t;
-# endif
-# ifndef HAVE_IP6TC_HANDLE_T
+#endif
+#ifndef HAVE_IP6TC_HANDLE_T
 typedef struct ip6tc_handle ip6tc_handle_t;
-# endif
-#endif /* !OWN_LIBIPTC */
+#endif
 
 /*
  * (Module-)Global variables
@@ -297,11 +288,11 @@ static int submit6_match (const struct ip6t_entry_match *match,
     }
 
     sstrncpy (vl.type, "ipt_bytes", sizeof (vl.type));
-    values[0].counter = (counter_t) entry->counters.bcnt;
+    values[0].derive = (derive_t) entry->counters.bcnt;
     plugin_dispatch_values (&vl);
 
     sstrncpy (vl.type, "ipt_packets", sizeof (vl.type));
-    values[0].counter = (counter_t) entry->counters.pcnt;
+    values[0].derive = (derive_t) entry->counters.pcnt;
     plugin_dispatch_values (&vl);
 
     return (0);
@@ -358,11 +349,11 @@ static int submit_match (const struct ipt_entry_match *match,
     }
 
     sstrncpy (vl.type, "ipt_bytes", sizeof (vl.type));
-    values[0].counter = (counter_t) entry->counters.bcnt;
+    values[0].derive = (derive_t) entry->counters.bcnt;
     plugin_dispatch_values (&vl);
 
     sstrncpy (vl.type, "ipt_packets", sizeof (vl.type));
-    values[0].counter = (counter_t) entry->counters.pcnt;
+    values[0].derive = (derive_t) entry->counters.pcnt;
     plugin_dispatch_values (&vl);
 
     return (0);

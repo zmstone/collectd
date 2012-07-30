@@ -54,7 +54,6 @@ typedef struct ce_callback_info_s ce_callback_info_t;
  * Private variables
  */
 static pthread_t listen_thread_id;
-static _Bool     listen_thread_running = false;
 
 static const char *config_keys[] =
 {
@@ -132,47 +131,7 @@ static int send_error (int fd, ETERM *to, const char *message) /* {{{ */
 	return (status);
 } /* }}} int send_error */
 
-static int eterm_to_int (const ETERM *term, int *ret_int) /* {{{ */
-{
-	if ((term == NULL) || (ret_int == NULL))
-		return (EINVAL);
-
-	switch (ERL_TYPE (term))
-	{
-		case ERL_INTEGER:
-			*ret_int = (int) ERL_INT_VALUE (term);
-			break;
-
-		case ERL_U_INTEGER:
-			*ret_int = (int) ERL_INT_UVALUE (term);
-			break;
-
-		case ERL_FLOAT:
-			*ret_int = (int) (ERL_FLOAT_VALUE (term) + .5);
-			break;
-
-#ifdef ERL_LONGLONG
-		case ERL_LONGLONG:
-			*ret_int = (int) ERL_LL_VALUE (term);
-			break;
-#endif /* ERL_LONGLONG */
-
-#ifdef ERL_U_LONGLONG
-		case ERL_U_LONGLONG:
-			*ret_int = (int) ERL_LL_UVALUE (term);
-			break;
-#endif /* ERL_U_LONGLONG */
-
-		default:
-			ERROR ("erlang plugin: Don't know how to cast "
-					"erlang type %#x to int.", (unsigned int) ERL_TYPE (term));
-			return (ENOTSUP);
-	} /* switch (ERL_TYPE (term)) */
-
-	return (0);
-} /* }}} int eterm_to_int */
-
-static int eterm_to_time_t (const ETERM *term, time_t *ret_time) /* {{{ */
+static int eterm_to_uint64_t(const ETERM *term, uint64_t *ret_time) /* {{{ */
 {
 	if ((term == NULL) || (ret_time == NULL))
 		return (EINVAL);
@@ -189,11 +148,11 @@ static int eterm_to_time_t (const ETERM *term, time_t *ret_time) /* {{{ */
 	switch (ERL_TYPE (term))
 	{
 		case ERL_INTEGER:
-			*ret_time = (time_t) ERL_INT_VALUE (term);
+			*ret_time = (uint64_t) ERL_INT_VALUE (term);
 			break;
 
 		case ERL_U_INTEGER:
-			*ret_time = (time_t) ERL_INT_UVALUE (term);
+			*ret_time = (uint64_t) ERL_INT_UVALUE (term);
 			break;
 
 		case ERL_ATOM:
@@ -211,29 +170,29 @@ static int eterm_to_time_t (const ETERM *term, time_t *ret_time) /* {{{ */
 			break;
 
 		case ERL_FLOAT:
-			*ret_time = (time_t) (ERL_FLOAT_VALUE (term) + .5);
+			*ret_time = (uint64_t) (ERL_FLOAT_VALUE (term) + .5);
 			break;
 
 #ifdef ERL_LONGLONG
 		case ERL_LONGLONG:
-			*ret_time = (time_t) ERL_LL_VALUE (term);
+			*ret_time = (uint64_t) ERL_LL_VALUE (term);
 			break;
 #endif /* ERL_LONGLONG */
 
 #ifdef ERL_U_LONGLONG
 		case ERL_U_LONGLONG:
-			*ret_time = (time_t) ERL_LL_UVALUE (term);
+			*ret_time = (uint64_t) ERL_LL_UVALUE (term);
 			break;
 #endif /* ERL_U_LONGLONG */
 
 		default:
 			ERROR ("erlang plugin: Don't know how to cast "
-					"erlang type %#x to time_t.", (unsigned int) ERL_TYPE (term));
+					"erlang type %#x to uint64_t.", (unsigned int) ERL_TYPE (term));
 			return (ENOTSUP);
 	} /* switch (ERL_TYPE (term)) */
 
 	return (0);
-} /* }}} int eterm_to_time_t */
+} /* }}} int eterm_to_uint64_t*/
 
 static int eterm_to_string (const ETERM *term, char *buffer, size_t buffer_size) /* {{{ */
 {
@@ -355,7 +314,7 @@ static int eterm_to_value (const ETERM *term, int ds_type, /* {{{ */
 static int eterm_to_values (const ETERM *term, const data_set_t *ds, /* {{{ */
 		value_list_t *vl)
 {
-	int ds_index;
+	int ds_index = 0;
 	int status;
 
 	if ((term == NULL) || (ds == NULL) || (vl == NULL))
@@ -460,13 +419,13 @@ static int eterm_to_value_list (const ETERM *term, value_list_t *vl) /* {{{ */
 		}
 
 		tmp = erl_element (7, term);
-		status = eterm_to_time_t (tmp, &vl->time);
+		status = eterm_to_uint64_t(tmp, &vl->time);
 		erl_free_term (tmp);
 		if (status != 0)
 			break;
 
 		tmp = erl_element (8, term);
-		status = eterm_to_int (tmp, &vl->interval);
+		status = eterm_to_uint64_t(tmp, &vl->interval);
 		erl_free_term (tmp);
 		if (status != 0)
 			break;
@@ -648,8 +607,8 @@ static int handle_register_read (ce_connection_info_t *cinfo, /* {{{ */
 	ssnprintf (callback_name, sizeof (callback_name), "erlang:%i",
 			connection_number);
 
-	status = plugin_register_complex_read (callback_name,
-			ce_read, /* interval = */ NULL, &ud);
+	status = plugin_register_complex_read (/* group  = */ NULL,
+			callback_name, ce_read, /* interval = */ NULL, &ud);
 	if (status == 0)
 		status = send_atom (cinfo->fd, req->from, "success");
 	else
@@ -695,7 +654,7 @@ static void *handle_client_thread (void *arg) /* {{{ */
 		if (emsg.type == ERL_REG_SEND)
 		{
 			ETERM *func;
-			ETERM *reply;
+			/* ETERM *reply; */
 
 			if (!ERL_IS_TUPLE (emsg.msg))
 			{
@@ -714,7 +673,7 @@ static void *handle_client_thread (void *arg) /* {{{ */
 			}
 
 			DEBUG ("erlang plugin: Wanted function is: %s.", ERL_ATOM_PTR (func));
-			reply = NULL;
+			/* reply = NULL; */
 			if (strcmp ("dispatch_values", ERL_ATOM_PTR (func)) == 0)
 				status = handle_dispatch_values (cinfo, &emsg);
 			else if (strcmp ("register_read", ERL_ATOM_PTR (func)) == 0)
@@ -941,9 +900,10 @@ void *listen_thread (void *arg) /* {{{ */
 	return ((void *) 0);
 } /* }}} void *listen_thread */
 
+static int listen_thread_running = 0;
 static int ce_init (void) /* {{{ */
 {
-	if (!listen_thread_running)
+	if (listen_thread_running == 0)
 	{
 		int status;
 
@@ -952,7 +912,7 @@ static int ce_init (void) /* {{{ */
 				listen_thread,
 				/* args = */ NULL);
 		if (status == 0)
-			listen_thread_running = true;
+			listen_thread_running = 1;
 	}
 
 	return (0);

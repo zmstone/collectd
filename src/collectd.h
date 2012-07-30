@@ -56,21 +56,6 @@
 #if HAVE_STDINT_H
 # include <stdint.h>
 #endif
-#if HAVE_STDBOOL_H
-# include <stdbool.h>
-#else
-# ifndef HAVE__BOOL
-#  ifdef __cplusplus
-typedef bool _Bool;
-#  else
-#   define _Bool signed char
-#  endif
-# endif
-# define bool _Bool
-# define false 0
-# define true 1
-# define __bool_true_false_are_defined 1
-#endif
 #if HAVE_UNISTD_H
 # include <unistd.h>
 #endif
@@ -112,6 +97,12 @@ typedef bool _Bool;
 # define assert(...) /* nop */
 #endif
 
+#if !defined(HAVE__BOOL) || !HAVE__BOOL
+typedef int _Bool;
+# undef HAVE__BOOL
+# define HAVE__BOOL 1
+#endif
+
 #if NAN_STATIC_DEFAULT
 # include <math.h>
 /* #endif NAN_STATIC_DEFAULT*/
@@ -135,6 +126,12 @@ typedef bool _Bool;
 # ifndef isnan
 #  define isnan(f) ((f) != (f))
 # endif /* !defined(isnan) */
+# ifndef isfinite
+#  define isfinite(f) (((f) - (f)) == 0.0)
+# endif
+# ifndef isinf
+#  define isinf(f) (!isfinite(f) && !isnan(f))
+# endif
 #endif /* NAN_ZERO_ZERO */
 
 /* Try really, really hard to determine endianess. Under NexentaStor 1.0.2 this
@@ -221,10 +218,6 @@ typedef bool _Bool;
 # include <kstat.h>
 #endif
 
-#if HAVE_SENSORS_SENSORS_H
-# include <sensors/sensors.h>
-#endif
-
 #ifndef PACKAGE_NAME
 #define PACKAGE_NAME "collectd"
 #endif
@@ -292,7 +285,11 @@ typedef bool _Bool;
 # endif
 #endif
 
-extern char hostname_g[];
-extern int  interval_g;
+/* Type for time as used by "utils_time.h" */
+typedef uint64_t cdtime_t;
+
+extern char     hostname_g[];
+extern cdtime_t interval_g;
+extern int      timeout_g;
 
 #endif /* COLLECTD_H */

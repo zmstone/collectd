@@ -1,6 +1,6 @@
 /**
  * collectd - src/common.h
- * Copyright (C) 2005-2009  Florian octo Forster
+ * Copyright (C) 2005-2010  Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,7 +16,7 @@
  * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  *
  * Authors:
- *   Florian octo Forster <octo at verplant.org>
+ *   Florian octo Forster <octo at collectd.org>
  *   Niki W. Waibel <niki.waibel@gmx.net>
 **/
 
@@ -236,8 +236,10 @@ int get_kstat (kstat_t **ksp_ptr, char *module, int instance, char *name);
 long long get_kstat_value (kstat_t *ksp, char *name);
 #endif
 
+#ifndef HAVE_HTONLL
 unsigned long long ntohll (unsigned long long n);
 unsigned long long htonll (unsigned long long n);
+#endif
 
 #if FP_LAYOUT_NEED_NOTHING
 # define ntohd(d) (d)
@@ -256,10 +258,14 @@ int format_name (char *ret, int ret_len,
 #define FORMAT_VL(ret, ret_len, vl) \
 	format_name (ret, ret_len, (vl)->host, (vl)->plugin, (vl)->plugin_instance, \
 			(vl)->type, (vl)->type_instance)
+int format_values (char *ret, size_t ret_len,
+		const data_set_t *ds, const value_list_t *vl,
+		_Bool store_rates);
 
 int parse_identifier (char *str, char **ret_host,
 		char **ret_plugin, char **ret_plugin_instance,
 		char **ret_type, char **ret_type_instance);
+int parse_identifier_vl (const char *str, value_list_t *vl);
 int parse_value (const char *value, value_t *ret_value, int ds_type);
 int parse_values (char *buffer, value_list_t *vl, const data_set_t *ds);
 
@@ -272,15 +278,16 @@ int notification_init (notification_t *n, int severity, const char *message,
 		const char *host,
 		const char *plugin, const char *plugin_instance,
 		const char *type, const char *type_instance);
-#define NOTIFICATION_INIT_VL(n, vl, ds) \
+#define NOTIFICATION_INIT_VL(n, vl) \
 	notification_init (n, NOTIF_FAILURE, NULL, \
 			(vl)->host, (vl)->plugin, (vl)->plugin_instance, \
-			(ds)->type, (vl)->type_instance)
+			(vl)->type, (vl)->type_instance)
 
 typedef int (*dirwalk_callback_f)(const char *dirname, const char *filename,
 		void *user_data);
 int walk_directory (const char *dir, dirwalk_callback_f callback,
-		void *user_data);
+		void *user_data, int hidden);
+/* Returns the number of bytes read or negative on error. */
 int read_file_contents (const char *filename, char *buf, int bufsize);
 
 counter_t counter_diff (counter_t old_value, counter_t new_value);
@@ -288,5 +295,9 @@ counter_t counter_diff (counter_t old_value, counter_t new_value);
 /* Converts a service name (a string) to a port number
  * (in the range [1-65535]). Returns less than zero on error. */
 int service_name_to_port_number (const char *service_name);
+
+/** Parse a string to a derive_t value. Returns zero on success or non-zero on
+ * failure. If failure is returned, ret_value is not touched. */
+int strtoderive (const char *string, derive_t *ret_value);
 
 #endif /* COMMON_H */

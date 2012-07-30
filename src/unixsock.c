@@ -26,7 +26,6 @@
 
 #include "utils_cmd_flush.h"
 #include "utils_cmd_getval.h"
-#include "utils_cmd_getthreshold.h"
 #include "utils_cmd_listval.h"
 #include "utils_cmd_putval.h"
 #include "utils_cmd_putnotif.h"
@@ -54,7 +53,8 @@ static const char *config_keys[] =
 {
 	"SocketFile",
 	"SocketGroup",
-	"SocketPerms"
+	"SocketPerms",
+	"DeleteSocket"
 };
 static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
@@ -65,6 +65,7 @@ static int   sock_fd    = -1;
 static char *sock_file  = NULL;
 static char *sock_group = NULL;
 static int   sock_perms = S_IRWXU | S_IRWXG;
+static _Bool delete_socket = 0;
 
 static pthread_t listen_thread = (pthread_t) 0;
 
@@ -89,9 +90,26 @@ static int us_open_socket (void)
 	sa.sun_family = AF_UNIX;
 	sstrncpy (sa.sun_path, (sock_file != NULL) ? sock_file : US_DEFAULT_PATH,
 			sizeof (sa.sun_path));
-	/* unlink (sa.sun_path); */
 
 	DEBUG ("unixsock plugin: socket path = %s", sa.sun_path);
+
+	if (delete_socket)
+	{
+		errno = 0;
+		status = unlink (sa.sun_path);
+		if ((status != 0) && (errno != ENOENT))
+		{
+			char errbuf[1024];
+			WARNING ("unixsock plugin: Deleting socket file \"%s\" failed: %s",
+					sa.sun_path,
+					sstrerror (errno, errbuf, sizeof (errbuf)));
+		}
+		else if (status == 0)
+		{
+			INFO ("unixsock plugin: Successfully deleted socket file \"%s\".",
+					sa.sun_path);
+		}
+	}
 
 	status = bind (sock_fd, (struct sockaddr *) &sa, sizeof (sa));
 	if (status != 0)
@@ -256,10 +274,6 @@ static void *us_handle_client (void *arg)
 		{
 			handle_getval (fhout, buffer);
 		}
-		else if (strcasecmp (fields[0], "getthreshold") == 0)
-		{
-			handle_getthreshold (fhout, buffer);
-		}
 		else if (strcasecmp (fields[0], "putval") == 0)
 		{
 			handle_putval (fhout, buffer);
@@ -391,6 +405,13 @@ static int us_config (const char *key, const char *val)
 	else if (strcasecmp (key, "SocketPerms") == 0)
 	{
 		sock_perms = (int) strtol (val, NULL, 8);
+	}
+	else if (strcasecmp (key, "DeleteSocket") == 0)
+	{
+		if (IS_TRUE (val))
+			delete_socket = 1;
+		else
+			delete_socket = 0;
 	}
 	else
 	{

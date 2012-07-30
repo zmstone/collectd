@@ -1,8 +1,9 @@
 /**
  * collectd - src/cpu.c
- * Copyright (C) 2005-2009  Florian octo Forster
+ * Copyright (C) 2005-2010  Florian octo Forster
  * Copyright (C) 2008       Oleg King
  * Copyright (C) 2009       Simon Kuhnle
+ * Copyright (C) 2009       Manuel Sanmartin
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -21,6 +22,7 @@
  *   Florian octo Forster <octo at verplant.org>
  *   Oleg King <king2 at kaluga.ru>
  *   Simon Kuhnle <simon at blarzwurst.de>
+ *   Manuel Sanmartin
  **/
 
 #include "collectd.h"
@@ -88,8 +90,13 @@
 # include <statgrab.h>
 #endif
 
+# ifdef HAVE_PERFSTAT
+#  include <sys/protosw.h>
+#  include <libperfstat.h>
+# endif /* HAVE_PERFSTAT */
+
 #if !PROCESSOR_CPU_LOAD_INFO && !KERNEL_LINUX && !HAVE_LIBKSTAT \
-	&& !CAN_USE_SYSCTL && !HAVE_SYSCTLBYNAME && !HAVE_LIBSTATGRAB
+	&& !CAN_USE_SYSCTL && !HAVE_SYSCTLBYNAME && !HAVE_LIBSTATGRAB && !HAVE_PERFSTAT
 # error "No applicable input method."
 #endif
 
@@ -123,11 +130,20 @@ static int numcpu;
 
 #elif defined(HAVE_SYSCTLBYNAME)
 static int numcpu;
+#  ifdef HAVE_SYSCTL_KERN_CP_TIMES
+static int maxcpu;
+#  endif /* HAVE_SYSCTL_KERN_CP_TIMES */
 /* #endif HAVE_SYSCTLBYNAME */
 
 #elif defined(HAVE_LIBSTATGRAB)
 /* no variables needed */
-#endif /* HAVE_LIBSTATGRAB */
+/* #endif  HAVE_LIBSTATGRAB */
+
+#elif defined(HAVE_PERFSTAT)
+static perfstat_cpu_t *perfcpu;
+static int numcpu;
+static int pnumcpu;
+#endif /* HAVE_PERFSTAT */
 
 static int init (void)
 {
@@ -147,7 +163,7 @@ static int init (void)
 	DEBUG ("host_processors returned %i %s", (int) cpu_list_len, cpu_list_len == 1 ? "processor" : "processors");
 	INFO ("cpu plugin: Found %i processor%s.", (int) cpu_list_len, cpu_list_len == 1 ? "" : "s");
 
-	cpu_temp_retry_max = 86400 / interval_g;
+	cpu_temp_retry_max = 86400 / CDTIME_T_TO_TIME_T (interval_g);
 /* #endif PROCESSOR_CPU_LOAD_INFO */
 
 #elif defined(HAVE_LIBKSTAT)
@@ -193,12 +209,22 @@ static int init (void)
 	if (sysctlbyname ("hw.ncpu", &numcpu, &numcpu_size, NULL, 0) < 0)
 	{
 		char errbuf[1024];
-		WARNING ("cpu plugin: sysctlbyname: %s",
+		WARNING ("cpu plugin: sysctlbyname(hw.ncpu): %s",
 				sstrerror (errno, errbuf, sizeof (errbuf)));
 		return (-1);
 	}
 
-#ifndef HAVE_SYSCTL_KERN_CP_TIMES
+#ifdef HAVE_SYSCTL_KERN_CP_TIMES
+	numcpu_size = sizeof (maxcpu);
+
+	if (sysctlbyname("kern.smp.maxcpus", &maxcpu, &numcpu_size, NULL, 0) < 0)
+	{
+		char errbuf[1024];
+		WARNING ("cpu plugin: sysctlbyname(kern.smp.maxcpus): %s",
+				sstrerror (errno, errbuf, sizeof (errbuf)));
+		return (-1);
+	}
+#else
 	if (numcpu != 1)
 		NOTICE ("cpu: Only one processor supported when using `sysctlbyname' (found %i)", numcpu);
 #endif
@@ -206,17 +232,21 @@ static int init (void)
 
 #elif defined(HAVE_LIBSTATGRAB)
 	/* nothing to initialize */
-#endif /* HAVE_LIBSTATGRAB */
+/* #endif HAVE_LIBSTATGRAB */
+
+#elif defined(HAVE_PERFSTAT)
+	/* nothing to initialize */
+#endif /* HAVE_PERFSTAT */
 
 	return (0);
 } /* int init */
 
-static void submit (int cpu_num, const char *type_instance, counter_t value)
+static void submit (int cpu_num, const char *type_instance, derive_t value)
 {
 	value_t values[1];
 	value_list_t vl = VALUE_LIST_INIT;
 
-	values[0].counter = value;
+	values[0].derive = value;
 
 	vl.values = values;
 	vl.values_len = 1;
@@ -268,10 +298,10 @@ static int cpu_read (void)
 			continue;
 		}
 
-		submit (cpu, "user", (counter_t) cpu_info.cpu_ticks[CPU_STATE_USER]);
-		submit (cpu, "nice", (counter_t) cpu_info.cpu_ticks[CPU_STATE_NICE]);
-		submit (cpu, "system", (counter_t) cpu_info.cpu_ticks[CPU_STATE_SYSTEM]);
-		submit (cpu, "idle", (counter_t) cpu_info.cpu_ticks[CPU_STATE_IDLE]);
+		submit (cpu, "user", (derive_t) cpu_info.cpu_ticks[CPU_STATE_USER]);
+		submit (cpu, "nice", (derive_t) cpu_info.cpu_ticks[CPU_STATE_NICE]);
+		submit (cpu, "system", (derive_t) cpu_info.cpu_ticks[CPU_STATE_SYSTEM]);
+		submit (cpu, "idle", (derive_t) cpu_info.cpu_ticks[CPU_STATE_IDLE]);
 #endif /* PROCESSOR_CPU_LOAD_INFO */
 #if PROCESSOR_TEMPERATURE
 		/*
@@ -322,8 +352,8 @@ static int cpu_read (void)
 
 #elif defined(KERNEL_LINUX)
 	int cpu;
-	counter_t user, nice, syst, idle;
-	counter_t wait, intr, sitr; /* sitr == soft interrupt */
+	derive_t user, nice, syst, idle;
+	derive_t wait, intr, sitr; /* sitr == soft interrupt */
 	FILE *fh;
 	char buf[1024];
 
@@ -380,7 +410,7 @@ static int cpu_read (void)
 
 #elif defined(HAVE_LIBKSTAT)
 	int cpu;
-	counter_t user, syst, idle, wait;
+	derive_t user, syst, idle, wait;
 	static cpu_stat_t cs;
 
 	if (kc == NULL)
@@ -391,10 +421,10 @@ static int cpu_read (void)
 		if (kstat_read (kc, ksp[cpu], &cs) == -1)
 			continue; /* error message? */
 
-		idle = (counter_t) cs.cpu_sysinfo.cpu[CPU_IDLE];
-		user = (counter_t) cs.cpu_sysinfo.cpu[CPU_USER];
-		syst = (counter_t) cs.cpu_sysinfo.cpu[CPU_KERNEL];
-		wait = (counter_t) cs.cpu_sysinfo.cpu[CPU_WAIT];
+		idle = (derive_t) cs.cpu_sysinfo.cpu[CPU_IDLE];
+		user = (derive_t) cs.cpu_sysinfo.cpu[CPU_USER];
+		syst = (derive_t) cs.cpu_sysinfo.cpu[CPU_KERNEL];
+		wait = (derive_t) cs.cpu_sysinfo.cpu[CPU_WAIT];
 
 		submit (ksp[cpu]->ks_instance, "user", user);
 		submit (ksp[cpu]->ks_instance, "system", syst);
@@ -467,7 +497,7 @@ static int cpu_read (void)
 	}
 /* #endif CAN_USE_SYSCTL */
 #elif defined(HAVE_SYSCTLBYNAME) && defined(HAVE_SYSCTL_KERN_CP_TIMES)
-	long cpuinfo[numcpu][CPUSTATES];
+	long cpuinfo[maxcpu][CPUSTATES];
 	size_t cpuinfo_size;
 	int i;
 
@@ -521,13 +551,52 @@ static int cpu_read (void)
 		return (-1);
 	}
 
-	submit (0, "idle",   (counter_t) cs->idle);
-	submit (0, "nice",   (counter_t) cs->nice);
-	submit (0, "swap",   (counter_t) cs->swap);
-	submit (0, "system", (counter_t) cs->kernel);
-	submit (0, "user",   (counter_t) cs->user);
-	submit (0, "wait",   (counter_t) cs->iowait);
-#endif /* HAVE_LIBSTATGRAB */
+	submit (0, "idle",   (derive_t) cs->idle);
+	submit (0, "nice",   (derive_t) cs->nice);
+	submit (0, "swap",   (derive_t) cs->swap);
+	submit (0, "system", (derive_t) cs->kernel);
+	submit (0, "user",   (derive_t) cs->user);
+	submit (0, "wait",   (derive_t) cs->iowait);
+/* #endif HAVE_LIBSTATGRAB */
+
+#elif defined(HAVE_PERFSTAT)
+	perfstat_id_t id;
+	int i, cpus;
+
+	numcpu =  perfstat_cpu(NULL, NULL, sizeof(perfstat_cpu_t), 0);
+	if(numcpu == -1)
+	{
+		char errbuf[1024];
+		WARNING ("cpu plugin: perfstat_cpu: %s",
+			sstrerror (errno, errbuf, sizeof (errbuf)));
+		return (-1);
+	}
+	
+	if (pnumcpu != numcpu || perfcpu == NULL) 
+	{
+		if (perfcpu != NULL) 
+			free(perfcpu);
+		perfcpu = malloc(numcpu * sizeof(perfstat_cpu_t));
+	}
+	pnumcpu = numcpu;
+
+	id.name[0] = '\0';
+	if ((cpus = perfstat_cpu(&id, perfcpu, sizeof(perfstat_cpu_t), numcpu)) < 0)
+	{
+		char errbuf[1024];
+		WARNING ("cpu plugin: perfstat_cpu: %s",
+			sstrerror (errno, errbuf, sizeof (errbuf)));
+		return (-1);
+	}
+
+	for (i = 0; i < cpus; i++) 
+	{
+		submit (i, "idle",   (derive_t) perfcpu[i].idle);
+		submit (i, "system", (derive_t) perfcpu[i].sys);
+		submit (i, "user",   (derive_t) perfcpu[i].user);
+		submit (i, "wait",   (derive_t) perfcpu[i].wait);
+	}
+#endif /* HAVE_PERFSTAT */
 
 	return (0);
 }

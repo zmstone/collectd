@@ -1,6 +1,6 @@
 /**
  * collectd - src/nginx.c
- * Copyright (C) 2006,2007  Florian octo Forster
+ * Copyright (C) 2006-2010  Florian octo Forster
  * Copyright (C) 2008       Sebastian Harl
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -18,7 +18,7 @@
  * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  *
  * Authors:
- *   Florian octo Forster <octo at verplant.org>
+ *   Florian octo Forster <octo at collectd.org>
  *   Sebastian Harl <sh at tokkee.org>
  **/
 
@@ -38,10 +38,9 @@ static char *cacert      = NULL;
 
 static CURL *curl = NULL;
 
-#define ABUFFER_SIZE 16384
-static char nginx_buffer[ABUFFER_SIZE];
-static int  nginx_buffer_len = 0;
-static char nginx_curl_error[CURL_ERROR_SIZE];
+static char   nginx_buffer[16384];
+static size_t nginx_buffer_len = 0;
+static char   nginx_curl_error[CURL_ERROR_SIZE];
 
 static const char *config_keys[] =
 {
@@ -59,17 +58,19 @@ static size_t nginx_curl_callback (void *buf, size_t size, size_t nmemb,
 {
   size_t len = size * nmemb;
 
-  if ((nginx_buffer_len + len) >= ABUFFER_SIZE)
+  /* Check if the data fits into the memory. If not, truncate it. */
+  if ((nginx_buffer_len + len) >= sizeof (nginx_buffer))
   {
-    len = (ABUFFER_SIZE - 1) - nginx_buffer_len;
+    assert (sizeof (nginx_buffer) > nginx_buffer_len);
+    len = (sizeof (nginx_buffer) - 1) - nginx_buffer_len;
   }
 
   if (len <= 0)
     return (len);
 
-  memcpy (nginx_buffer + nginx_buffer_len, (char *) buf, len);
+  memcpy (&nginx_buffer[nginx_buffer_len], buf, len);
   nginx_buffer_len += len;
-  nginx_buffer[nginx_buffer_len] = '\0';
+  nginx_buffer[nginx_buffer_len] = 0;
 
   return (len);
 }
@@ -119,6 +120,7 @@ static int init (void)
     return (-1);
   }
 
+  curl_easy_setopt (curl, CURLOPT_NOSIGNAL, 1);
   curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION, nginx_curl_callback);
   curl_easy_setopt (curl, CURLOPT_USERAGENT, PACKAGE_NAME"/"PACKAGE_VERSION);
   curl_easy_setopt (curl, CURLOPT_ERRORBUFFER, nginx_curl_error);
@@ -177,7 +179,7 @@ static void submit (char *type, char *inst, long long value)
   if (strcmp (type, "nginx_connections") == 0)
     values[0].gauge = value;
   else if (strcmp (type, "nginx_requests") == 0)
-    values[0].counter = value;
+    values[0].derive = value;
   else
     return;
 

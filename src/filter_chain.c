@@ -1,6 +1,6 @@
 /**
  * collectd - src/filter_chain.h
- * Copyright (C) 2008,2009  Florian octo Forster
+ * Copyright (C) 2008-2010  Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -22,6 +22,7 @@
 #include "collectd.h"
 #include "configfile.h"
 #include "plugin.h"
+#include "utils_complain.h"
 #include "common.h"
 #include "filter_chain.h"
 
@@ -692,11 +693,30 @@ static int fc_bit_write_invoke (const data_set_t *ds, /* {{{ */
 
   if ((plugin_list == NULL) || (plugin_list[0] == NULL))
   {
+    static c_complain_t enoent_complaint = C_COMPLAIN_INIT_STATIC;
+
     status = plugin_write (/* plugin = */ NULL, ds, vl);
-    if (status != 0)
+    if (status == ENOENT)
+    {
+      /* in most cases this is a permanent error, so use the complain
+       * mechanism rather than spamming the logs */
+      c_complain (LOG_INFO, &enoent_complaint,
+          "Filter subsystem: Built-in target `write': Dispatching value to "
+          "all write plugins failed with status %i (ENOENT). "
+          "Most likely this means you didn't load any write plugins.",
+          status);
+    }
+    else if (status != 0)
     {
       INFO ("Filter subsystem: Built-in target `write': Dispatching value to "
           "all write plugins failed with status %i.", status);
+    }
+    else
+    {
+      assert (status == 0);
+      c_release (LOG_INFO, &enoent_complaint, "Filter subsystem: "
+          "Built-in target `write': Some write plugin is back to normal "
+          "operation. `write' succeeded.");
     }
   }
   else

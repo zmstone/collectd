@@ -28,10 +28,10 @@
 /*
  * Defines
  */
-#define UTILS_MATCH_DS_TYPE_GAUGE   0x10
-#define UTILS_MATCH_DS_TYPE_COUNTER 0x20
-#define UTILS_MATCH_DS_TYPE_DERIVE 0x30
-#define UTILS_MATCH_DS_TYPE_ABSOLUTE 0x40
+#define UTILS_MATCH_DS_TYPE_GAUGE    0x10
+#define UTILS_MATCH_DS_TYPE_COUNTER  0x20
+#define UTILS_MATCH_DS_TYPE_DERIVE   0x40
+#define UTILS_MATCH_DS_TYPE_ABSOLUTE 0x80
 
 #define UTILS_MATCH_CF_GAUGE_AVERAGE 0x01
 #define UTILS_MATCH_CF_GAUGE_MIN     0x02
@@ -82,8 +82,10 @@ typedef struct cu_match_value_s cu_match_value_t;
  *  then only the submatch (the part in the parenthesis) will be passed to the
  *  callback. If there is no submatch, then the entire string is passed to the
  *  callback.
+ *  The optional `excluderegex' allows to exclude the line from the match, if
+ *  the excluderegex matches.
  */
-cu_match_t *match_create_callback (const char *regex,
+cu_match_t *match_create_callback (const char *regex, const char *excluderegex,
 		int (*callback) (const char *str,
 		  char * const *matches, size_t matches_num, void *user_data),
 		void *user_data);
@@ -112,7 +114,8 @@ cu_match_t *match_create_callback (const char *regex,
  *    The function will not search for anything in the string and increase
  *    value.counter by one.
  */
-cu_match_t *match_create_simple (const char *regex, int ds_type);
+cu_match_t *match_create_simple (const char *regex,
+				 const char *excluderegex, int ds_type);
 
 /*
  * NAME

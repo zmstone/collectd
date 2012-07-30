@@ -1,6 +1,6 @@
 /**
  * collectd - src/meta_data.c
- * Copyright (C) 2008,2009  Florian octo Forster
+ * Copyright (C) 2008-2011  Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -24,15 +24,6 @@
 #include "meta_data.h"
 
 #include <pthread.h>
-
-/*
- * Defines
- */
-#define MD_TYPE_STRING       1
-#define MD_TYPE_SIGNED_INT   2
-#define MD_TYPE_UNSIGNED_INT 3
-#define MD_TYPE_DOUBLE       4
-#define MD_TYPE_BOOLEAN      5
 
 /*
  * Data types
@@ -109,6 +100,24 @@ static meta_entry_t *md_entry_alloc (const char *key) /* {{{ */
 
   return (e);
 } /* }}} meta_entry_t *md_entry_alloc */
+
+static meta_entry_t *md_entry_clone (const meta_entry_t *orig) /* {{{ */
+{
+  meta_entry_t *copy;
+
+  if (orig == NULL)
+    return (NULL);
+
+  copy = md_entry_alloc (orig->key);
+  copy->type = orig->type;
+  if (copy->type == MD_TYPE_STRING)
+    copy->value.mv_string = strdup (orig->value.mv_string);
+  else
+    copy->value = orig->value;
+
+  copy->next = md_entry_clone (orig->next);
+  return (copy);
+} /* }}} meta_entry_t *md_entry_clone */
 
 static void md_entry_free (meta_entry_t *e) /* {{{ */
 {
@@ -218,12 +227,31 @@ meta_data_t *meta_data_create (void) /* {{{ */
   return (md);
 } /* }}} meta_data_t *meta_data_create */
 
+meta_data_t *meta_data_clone (meta_data_t *orig) /* {{{ */
+{
+  meta_data_t *copy;
+
+  if (orig == NULL)
+    return (NULL);
+
+  copy = meta_data_create ();
+  if (copy == NULL)
+    return (NULL);
+
+  pthread_mutex_lock (&orig->lock);
+  copy->head = md_entry_clone (orig->head);
+  pthread_mutex_unlock (&orig->lock);
+
+  return (copy);
+} /* }}} meta_data_t *meta_data_clone */
+
 void meta_data_destroy (meta_data_t *md) /* {{{ */
 {
   if (md == NULL)
     return;
 
   md_entry_free (md->head);
+  pthread_mutex_destroy (&md->lock);
   free (md);
 } /* }}} void meta_data_destroy */
 
@@ -248,6 +276,49 @@ int meta_data_exists (meta_data_t *md, const char *key) /* {{{ */
   pthread_mutex_unlock (&md->lock);
   return (0);
 } /* }}} int meta_data_exists */
+
+int meta_data_type (meta_data_t *md, const char *key) /* {{{ */
+{
+  meta_entry_t *e;
+
+  if ((md == NULL) || (key == NULL))
+    return -EINVAL;
+
+  pthread_mutex_lock (&md->lock);
+
+  for (e = md->head; e != NULL; e = e->next)
+  {
+    if (strcasecmp (key, e->key) == 0)
+    {
+      pthread_mutex_unlock (&md->lock);
+      return e->type;
+    }
+  }
+
+  pthread_mutex_unlock (&md->lock);
+  return 0;
+} /* }}} int meta_data_type */
+
+int meta_data_toc (meta_data_t *md, char ***toc) /* {{{ */
+{
+  int i = 0, count = 0;
+  meta_entry_t *e;
+
+  if ((md == NULL) || (toc == NULL))
+    return -EINVAL;
+
+  pthread_mutex_lock (&md->lock);
+
+  for (e = md->head; e != NULL; e = e->next)
+    ++count;    
+
+  *toc = malloc(count * sizeof(**toc));
+  for (e = md->head; e != NULL; e = e->next)
+    (*toc)[i++] = strdup(e->key);
+  
+  pthread_mutex_unlock (&md->lock);
+  return count;
+} /* }}} int meta_data_toc */
 
 int meta_data_delete (meta_data_t *md, const char *key) /* {{{ */
 {

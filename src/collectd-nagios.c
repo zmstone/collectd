@@ -1,6 +1,6 @@
 /**
  * collectd-nagios - src/collectd-nagios.c
- * Copyright (C) 2008  Florian octo Forster
+ * Copyright (C) 2008-2010  Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -35,14 +35,6 @@
 #include <strings.h>
 #include <assert.h>
 
-#include <sys/socket.h>
-#include <sys/un.h>
-
-#include "libcollectdclient/client.h"
-
-/*
- * This is copied directly from collectd.h. Make changes there!
- */
 #if NAN_STATIC_DEFAULT
 # include <math.h>
 /* #endif NAN_STATIC_DEFAULT*/
@@ -66,7 +58,15 @@
 # ifndef isnan
 #  define isnan(f) ((f) != (f))
 # endif /* !defined(isnan) */
+# ifndef isfinite
+#  define isfinite(f) (((f) - (f)) == 0.0)
+# endif
+# ifndef isinf
+#  define isinf(f) (!isfinite(f) && !isnan(f))
+# endif
 #endif /* NAN_ZERO_ZERO */
+
+#include "libcollectdclient/client.h"
 
 #define RET_OKAY     0
 #define RET_WARNING  1
@@ -96,6 +96,7 @@ static char *hostname_g = NULL;
 static range_t range_critical_g;
 static range_t range_warning_g;
 static int consolitation_g = CON_NONE;
+static _Bool nan_is_error_g = 0;
 
 static char **match_ds_g = NULL;
 static int    match_ds_num_g = 0;
@@ -254,6 +255,7 @@ static void usage (const char *name)
 			"  -H <host>      Hostname to query the values for.\n"
 			"  -c <range>     Critical range\n"
 			"  -w <range>     Warning range\n"
+			"  -m             Treat \"Not a Number\" (NaN) as critical (default: warning)\n"
 			"\n"
 			"Consolidation functions:\n"
 			"  none:          Apply the warning- and critical-ranges to each data-source\n"
@@ -266,6 +268,67 @@ static void usage (const char *name)
 			"\n", name);
 	exit (1);
 } /* void usage */
+
+static int do_listval (lcc_connection_t *connection)
+{
+	lcc_identifier_t *ret_ident = NULL;
+	size_t ret_ident_num = 0;
+
+	char *hostname = NULL;
+
+	int status;
+	size_t i;
+
+	status = lcc_listval (connection, &ret_ident, &ret_ident_num);
+	if (status != 0) {
+		printf ("UNKNOWN: %s\n", lcc_strerror (connection));
+		if (ret_ident != NULL)
+			free (ret_ident);
+		return (RET_UNKNOWN);
+	}
+
+	status = lcc_sort_identifiers (connection, ret_ident, ret_ident_num);
+	if (status != 0) {
+		printf ("UNKNOWN: %s\n", lcc_strerror (connection));
+		if (ret_ident != NULL)
+			free (ret_ident);
+		return (RET_UNKNOWN);
+	}
+
+	for (i = 0; i < ret_ident_num; ++i) {
+		char id[1024];
+
+		if ((hostname_g != NULL) && (strcasecmp (hostname_g, ret_ident[i].host)))
+			continue;
+
+		if ((hostname == NULL) || strcasecmp (hostname, ret_ident[i].host))
+		{
+			if (hostname != NULL)
+				free (hostname);
+			hostname = strdup (ret_ident[i].host);
+			printf ("Host: %s\n", hostname);
+		}
+
+		/* empty hostname; not to be printed again */
+		ret_ident[i].host[0] = '\0';
+
+		status = lcc_identifier_to_string (connection,
+				id, sizeof (id), ret_ident + i);
+		if (status != 0) {
+			printf ("ERROR: listval: Failed to convert returned "
+					"identifier to a string: %s\n",
+					lcc_strerror (connection));
+			continue;
+		}
+
+		/* skip over the (empty) hostname and following '/' */
+		printf ("\t%s\n", id + 1);
+	}
+
+	if (ret_ident != NULL)
+		free (ret_ident);
+	return (RET_OKAY);
+} /* int do_listval */
 
 static int do_check_con_none (size_t values_num,
 		double *values, char **values_names)
@@ -280,7 +343,12 @@ static int do_check_con_none (size_t values_num,
 	for (i = 0; i < values_num; i++)
 	{
 		if (isnan (values[i]))
-			num_warning++;
+		{
+			if (nan_is_error_g)
+				num_critical++;
+			else
+				num_warning++;
+		}
 		else if (match_range (&range_critical_g, values[i]) != 0)
 			num_critical++;
 		else if (match_range (&range_warning_g, values[i]) != 0)
@@ -316,7 +384,7 @@ static int do_check_con_none (size_t values_num,
 	{
 		printf (" |");
 		for (i = 0; i < values_num; i++)
-			printf (" %s=%g;;;;", values_names[i], values[i]);
+			printf (" %s=%f;;;;", values_names[i], values[i]);
 	}
 	printf ("\n");
 
@@ -337,11 +405,18 @@ static int do_check_con_average (size_t values_num,
 	total_num = 0;
 	for (i = 0; i < values_num; i++)
 	{
-		if (!isnan (values[i]))
+		if (isnan (values[i]))
 		{
-			total += values[i];
-			total_num++;
+			if (!nan_is_error_g)
+				continue;
+
+			printf ("CRITICAL: Data source \"%s\" is NaN\n",
+					values_names[i]);
+			return (RET_CRITICAL);
 		}
+
+		total += values[i];
+		total_num++;
 	}
 
 	if (total_num == 0)
@@ -370,7 +445,7 @@ static int do_check_con_average (size_t values_num,
 
 	printf ("%s: %g average |", status_str, average);
 	for (i = 0; i < values_num; i++)
-		printf (" %s=%g;;;;", values_names[i], values[i]);
+		printf (" %s=%f;;;;", values_names[i], values[i]);
 	printf ("\n");
 
 	return (status_code);
@@ -389,11 +464,18 @@ static int do_check_con_sum (size_t values_num,
 	total_num = 0;
 	for (i = 0; i < values_num; i++)
 	{
-		if (!isnan (values[i]))
+		if (isnan (values[i]))
 		{
-			total += values[i];
-			total_num++;
+			if (!nan_is_error_g)
+				continue;
+
+			printf ("CRITICAL: Data source \"%s\" is NaN\n",
+					values_names[i]);
+			return (RET_CRITICAL);
 		}
+
+		total += values[i];
+		total_num++;
 	}
 
 	if (total_num == 0)
@@ -420,7 +502,7 @@ static int do_check_con_sum (size_t values_num,
 
 	printf ("%s: %g sum |", status_str, total);
 	for (i = 0; i < values_num; i++)
-		printf (" %s=%g;;;;", values_names[i], values[i]);
+		printf (" %s=%f;;;;", values_names[i], values[i]);
 	printf ("\n");
 
 	return (status_code);
@@ -443,8 +525,19 @@ static int do_check_con_percentage (size_t values_num,
 	}
 
 	for (i = 0; i < values_num; i++)
-		if (!isnan (values[i]))
-			sum += values[i];
+	{
+		if (isnan (values[i]))
+		{
+			if (!nan_is_error_g)
+				continue;
+
+			printf ("CRITICAL: Data source \"%s\" is NaN\n",
+					values_names[i]);
+			return (RET_CRITICAL);
+		}
+
+		sum += values[i];
+	}
 
 	if (sum == 0.0)
 	{
@@ -476,33 +569,19 @@ static int do_check_con_percentage (size_t values_num,
 	return (status_code);
 } /* int do_check_con_percentage */
 
-static int do_check (void)
+static int do_check (lcc_connection_t *connection)
 {
-	lcc_connection_t *connection;
 	gauge_t *values;
 	char   **values_names;
 	size_t   values_num;
-	char address[1024];
 	char ident_str[1024];
 	lcc_identifier_t ident;
 	size_t i;
 	int status;
 
-	snprintf (address, sizeof (address), "unix:%s", socket_file_g);
-	address[sizeof (address) - 1] = 0;
-
 	snprintf (ident_str, sizeof (ident_str), "%s/%s",
 			hostname_g, value_string_g);
 	ident_str[sizeof (ident_str) - 1] = 0;
-
-	connection = NULL;
-	status = lcc_connect (address, &connection);
-	if (status != 0)
-	{
-		printf ("ERROR: Connecting to daemon at %s failed.\n",
-				socket_file_g);
-		return (RET_CRITICAL);
-	}
 
 	memset (&ident, 0, sizeof (ident));
 	status = lcc_string_to_identifier (connection, &ident, ident_str);
@@ -551,6 +630,11 @@ static int do_check (void)
 
 int main (int argc, char **argv)
 {
+	char address[1024];
+	lcc_connection_t *connection;
+
+	int status;
+
 	range_critical_g.min = NAN;
 	range_critical_g.max = NAN;
 	range_critical_g.invert = 0;
@@ -563,7 +647,7 @@ int main (int argc, char **argv)
 	{
 		int c;
 
-		c = getopt (argc, argv, "w:c:s:n:H:g:d:h");
+		c = getopt (argc, argv, "w:c:s:n:H:g:d:hm");
 		if (c < 0)
 			break;
 
@@ -623,17 +707,35 @@ int main (int argc, char **argv)
 				match_ds_num_g++;
 				break;
 			}
+			case 'm':
+				nan_is_error_g = 1;
+				break;
 			default:
 				usage (argv[0]);
 		} /* switch (c) */
 	}
 
 	if ((socket_file_g == NULL) || (value_string_g == NULL)
-			|| (hostname_g == NULL))
+			|| ((hostname_g == NULL) && (strcasecmp (value_string_g, "LIST"))))
 	{
 		fprintf (stderr, "Missing required arguments.\n");
 		usage (argv[0]);
 	}
 
-	return (do_check ());
+	snprintf (address, sizeof (address), "unix:%s", socket_file_g);
+	address[sizeof (address) - 1] = 0;
+
+	connection = NULL;
+	status = lcc_connect (address, &connection);
+	if (status != 0)
+	{
+		printf ("ERROR: Connecting to daemon at %s failed.\n",
+				socket_file_g);
+		return (RET_CRITICAL);
+	}
+
+	if (0 == strcasecmp (value_string_g, "LIST"))
+		return (do_listval (connection));
+
+	return (do_check (connection));
 } /* int main */

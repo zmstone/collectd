@@ -2,19 +2,30 @@
  * collectd - src/postgresql.c
  * Copyright (C) 2008, 2009  Sebastian Harl
  * Copyright (C) 2009        Florian Forster
+ * All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; only version 2 of the License is applicable.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
  *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
+ * - Redistributions of source code must retain the above copyright
+ *   notice, this list of conditions and the following disclaimer.
  *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+ * - Redistributions in binary form must reproduce the above copyright
+ *   notice, this list of conditions and the following disclaimer in the
+ *   documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
  *
  * Authors:
  *   Sebastian Harl <sh at tokkee.org>
@@ -102,8 +113,11 @@ typedef struct {
 	int max_params_num;
 
 	/* user configuration */
+	udb_query_preparation_area_t **q_prep_areas;
 	udb_query_t    **queries;
 	size_t           queries_num;
+
+	cdtime_t interval;
 
 	char *host;
 	char *port;
@@ -132,21 +146,15 @@ static int def_queries_num = STATIC_ARRAY_SIZE (def_queries);
 static udb_query_t      **queries       = NULL;
 static size_t             queries_num   = 0;
 
-static c_psql_database_t *databases     = NULL;
-static int                databases_num = 0;
-
 static c_psql_database_t *c_psql_database_new (const char *name)
 {
 	c_psql_database_t *db;
 
-	++databases_num;
-	if (NULL == (databases = (c_psql_database_t *)realloc (databases,
-				databases_num * sizeof (*databases)))) {
+	db = (c_psql_database_t *)malloc (sizeof (*db));
+	if (NULL == db) {
 		log_err ("Out of memory.");
-		exit (5);
+		return NULL;
 	}
-
-	db = databases + (databases_num - 1);
 
 	db->conn = NULL;
 
@@ -157,8 +165,11 @@ static c_psql_database_t *c_psql_database_new (const char *name)
 
 	db->max_params_num = 0;
 
+	db->q_prep_areas   = NULL;
 	db->queries        = NULL;
 	db->queries_num    = 0;
+
+	db->interval   = 0;
 
 	db->database   = sstrdup (name);
 	db->host       = NULL;
@@ -174,10 +185,19 @@ static c_psql_database_t *c_psql_database_new (const char *name)
 	return db;
 } /* c_psql_database_new */
 
-static void c_psql_database_delete (c_psql_database_t *db)
+static void c_psql_database_delete (void *data)
 {
+	size_t i;
+
+	c_psql_database_t *db = data;
+
 	PQfinish (db->conn);
 	db->conn = NULL;
+
+	if (db->q_prep_areas)
+		for (i = 0; i < db->queries_num; ++i)
+			udb_query_delete_preparation_area (db->q_prep_areas[i]);
+	free (db->q_prep_areas);
 
 	sfree (db->queries);
 	db->queries_num = 0;
@@ -196,8 +216,49 @@ static void c_psql_database_delete (c_psql_database_t *db)
 	return;
 } /* c_psql_database_delete */
 
+static int c_psql_connect (c_psql_database_t *db)
+{
+	char  conninfo[4096];
+	char *buf     = conninfo;
+	int   buf_len = sizeof (conninfo);
+	int   status;
+
+	if (! db)
+		return -1;
+
+	status = ssnprintf (buf, buf_len, "dbname = '%s'", db->database);
+	if (0 < status) {
+		buf     += status;
+		buf_len -= status;
+	}
+
+	C_PSQL_PAR_APPEND (buf, buf_len, "host",       db->host);
+	C_PSQL_PAR_APPEND (buf, buf_len, "port",       db->port);
+	C_PSQL_PAR_APPEND (buf, buf_len, "user",       db->user);
+	C_PSQL_PAR_APPEND (buf, buf_len, "password",   db->password);
+	C_PSQL_PAR_APPEND (buf, buf_len, "sslmode",    db->sslmode);
+	C_PSQL_PAR_APPEND (buf, buf_len, "krbsrvname", db->krbsrvname);
+	C_PSQL_PAR_APPEND (buf, buf_len, "service",    db->service);
+
+	db->conn = PQconnectdb (conninfo);
+	db->proto_version = PQprotocolVersion (db->conn);
+	return 0;
+} /* c_psql_connect */
+
 static int c_psql_check_connection (c_psql_database_t *db)
 {
+	_Bool init = 0;
+
+	if (! db->conn) {
+		init = 1;
+
+		/* trigger c_release() */
+		if (0 == db->conn_complaint.interval)
+			db->conn_complaint.interval = 1;
+
+		c_psql_connect (db);
+	}
+
 	/* "ping" */
 	PQclear (PQexec (db->conn, "SELECT 42;"));
 
@@ -216,15 +277,30 @@ static int c_psql_check_connection (c_psql_database_t *db)
 		}
 
 		db->proto_version = PQprotocolVersion (db->conn);
-		if (3 > db->proto_version)
-			log_warn ("Protocol version %d does not support parameters.",
-					db->proto_version);
 	}
 
 	db->server_version = PQserverVersion (db->conn);
 
-	c_release (LOG_INFO, &db->conn_complaint,
-			"Successfully reconnected to database %s", PQdb (db->conn));
+	if (c_would_release (&db->conn_complaint)) {
+		char *server_host;
+		int   server_version;
+
+		server_host    = PQhost (db->conn);
+		server_version = PQserverVersion (db->conn);
+
+		c_do_release (LOG_INFO, &db->conn_complaint,
+				"Successfully %sconnected to database %s (user %s) "
+				"at server %s%s%s (server version: %d.%d.%d, "
+				"protocol version: %d, pid: %d)", init ? "" : "re",
+				PQdb (db->conn), PQuser (db->conn),
+				C_PSQL_SOCKET3 (server_host, PQport (db->conn)),
+				C_PSQL_SERVER_VERSION3 (server_version),
+				db->proto_version, PQbackendPID (db->conn));
+
+		if (3 > db->proto_version)
+			log_warn ("Protocol version %d does not support parameters.",
+					db->proto_version);
+	}
 	return 0;
 } /* c_psql_check_connection */
 
@@ -259,7 +335,9 @@ static PGresult *c_psql_exec_query_params (c_psql_database_t *db,
 				params[i] = db->user;
 				break;
 			case C_PSQL_PARAM_INTERVAL:
-				ssnprintf (interval, sizeof (interval), "%i", interval_g);
+				ssnprintf (interval, sizeof (interval), "%.3f",
+						(db->interval > 0)
+						? CDTIME_T_TO_DOUBLE (db->interval) : interval_g);
 				params[i] = interval;
 				break;
 			default:
@@ -273,7 +351,8 @@ static PGresult *c_psql_exec_query_params (c_psql_database_t *db,
 			NULL, NULL, /* return text data */ 0);
 } /* c_psql_exec_query_params */
 
-static int c_psql_exec_query (c_psql_database_t *db, udb_query_t *q)
+static int c_psql_exec_query (c_psql_database_t *db, udb_query_t *q,
+		udb_query_preparation_area_t *prep_area)
 {
 	PGresult *res;
 
@@ -345,7 +424,7 @@ static int c_psql_exec_query (c_psql_database_t *db, udb_query_t *q)
 		 * `BAIL_OUT'. */
 		column_names[col] = PQfname (res, col);
 		if (NULL == column_names[col]) {
-			log_err ("Failed to resolv name of column %i.", col);
+			log_err ("Failed to resolve name of column %i.", col);
 			BAIL_OUT (-1);
 		}
 	}
@@ -356,8 +435,8 @@ static int c_psql_exec_query (c_psql_database_t *db, udb_query_t *q)
 	else
 		host = db->host;
 
-	status = udb_query_prepare_result (q, host, "postgresql",
-			db->database, column_names, (size_t) column_num);
+	status = udb_query_prepare_result (q, prep_area, host, "postgresql",
+			db->database, column_names, (size_t) column_num, db->interval);
 	if (0 != status) {
 		log_err ("udb_query_prepare_result failed with status %i.",
 				status);
@@ -380,46 +459,52 @@ static int c_psql_exec_query (c_psql_database_t *db, udb_query_t *q)
 		if (col < column_num)
 			continue;
 
-		status = udb_query_handle_result (q, column_values);
+		status = udb_query_handle_result (q, prep_area, column_values);
 		if (status != 0) {
 			log_err ("udb_query_handle_result failed with status %i.",
 					status);
 		}
 	} /* for (row = 0; row < rows_num; ++row) */
 
+	udb_query_finish_result (q, prep_area);
+
 	BAIL_OUT (0);
 #undef BAIL_OUT
 } /* c_psql_exec_query */
 
-static int c_psql_read (void)
+static int c_psql_read (user_data_t *ud)
 {
+	c_psql_database_t *db;
+
 	int success = 0;
 	int i;
 
-	for (i = 0; i < databases_num; ++i) {
-		c_psql_database_t *db = databases + i;
+	if ((ud == NULL) || (ud->data == NULL)) {
+		log_err ("c_psql_read: Invalid user data.");
+		return -1;
+	}
 
-		int j;
+	db = ud->data;
 
-		assert (NULL != db->database);
+	assert (NULL != db->database);
 
-		if (0 != c_psql_check_connection (db))
+	if (0 != c_psql_check_connection (db))
+		return -1;
+
+	for (i = 0; i < db->queries_num; ++i)
+	{
+		udb_query_preparation_area_t *prep_area;
+		udb_query_t *q;
+
+		prep_area = db->q_prep_areas[i];
+		q = db->queries[i];
+
+		if ((0 != db->server_version)
+				&& (udb_query_check_version (q, db->server_version) <= 0))
 			continue;
 
-		for (j = 0; j < db->queries_num; ++j)
-		{
-			udb_query_t *q;
-
-			q = db->queries[j];
-
-			if ((0 != db->server_version)
-				&& (udb_query_check_version (q, db->server_version) <= 0))
-				continue;
-
-			c_psql_exec_query (db, q);
-		}
-
-		++success;
+		if (0 == c_psql_exec_query (db, q, prep_area))
+			success = 1;
 	}
 
 	if (! success)
@@ -429,19 +514,7 @@ static int c_psql_read (void)
 
 static int c_psql_shutdown (void)
 {
-	int i;
-
-	if ((NULL == databases) || (0 == databases_num))
-		return 0;
-
-	plugin_unregister_read ("postgresql");
-	plugin_unregister_shutdown ("postgresql");
-
-	for (i = 0; i < databases_num; ++i)
-		c_psql_database_delete (databases + i);
-
-	sfree (databases);
-	databases_num = 0;
+	plugin_unregister_read_group ("postgresql");
 
 	udb_query_free (queries, queries_num);
 	queries = NULL;
@@ -449,83 +522,6 @@ static int c_psql_shutdown (void)
 
 	return 0;
 } /* c_psql_shutdown */
-
-static int c_psql_init (void)
-{
-	int i;
-
-	if ((NULL == databases) || (0 == databases_num))
-		return 0;
-
-	for (i = 0; i < databases_num; ++i) {
-		c_psql_database_t *db = databases + i;
-
-		char  conninfo[4096];
-		char *buf     = conninfo;
-		int   buf_len = sizeof (conninfo);
-		int   status;
-
-		char *server_host;
-		int   server_version;
-
-		/* this will happen during reinitialization */
-		if (NULL != db->conn) {
-			c_psql_check_connection (db);
-			continue;
-		}
-
-		status = ssnprintf (buf, buf_len, "dbname = '%s'", db->database);
-		if (0 < status) {
-			buf     += status;
-			buf_len -= status;
-		}
-
-		C_PSQL_PAR_APPEND (buf, buf_len, "host",       db->host);
-		C_PSQL_PAR_APPEND (buf, buf_len, "port",       db->port);
-		C_PSQL_PAR_APPEND (buf, buf_len, "user",       db->user);
-		C_PSQL_PAR_APPEND (buf, buf_len, "password",   db->password);
-		C_PSQL_PAR_APPEND (buf, buf_len, "sslmode",    db->sslmode);
-		C_PSQL_PAR_APPEND (buf, buf_len, "krbsrvname", db->krbsrvname);
-		C_PSQL_PAR_APPEND (buf, buf_len, "service",    db->service);
-
-		db->conn = PQconnectdb (conninfo);
-		if (0 != c_psql_check_connection (db))
-			continue;
-
-		db->proto_version = PQprotocolVersion (db->conn);
-
-		server_host    = PQhost (db->conn);
-		server_version = PQserverVersion (db->conn);
-		log_info ("Sucessfully connected to database %s (user %s) "
-				"at server %s%s%s (server version: %d.%d.%d, "
-				"protocol version: %d, pid: %d)",
-				PQdb (db->conn), PQuser (db->conn),
-				C_PSQL_SOCKET3 (server_host, PQport (db->conn)),
-				C_PSQL_SERVER_VERSION3 (server_version),
-				db->proto_version, PQbackendPID (db->conn));
-
-		if (3 > db->proto_version)
-			log_warn ("Protocol version %d does not support parameters.",
-					db->proto_version);
-	}
-
-	plugin_register_read ("postgresql", c_psql_read);
-	plugin_register_shutdown ("postgresql", c_psql_shutdown);
-	return 0;
-} /* c_psql_init */
-
-static int config_set_s (char *name, char **var, const oconfig_item_t *ci)
-{
-	if ((0 != ci->children_num) || (1 != ci->values_num)
-			|| (OCONFIG_TYPE_STRING != ci->values[0].type)) {
-		log_err ("%s expects a single string argument.", name);
-		return 1;
-	}
-
-	sfree (*var);
-	*var = sstrdup (ci->values[0].value.string);
-	return 0;
-} /* config_set_s */
 
 static int config_query_param_add (udb_query_t *q, oconfig_item_t *ci)
 {
@@ -587,6 +583,10 @@ static int c_psql_config_database (oconfig_item_t *ci)
 {
 	c_psql_database_t *db;
 
+	char cb_name[DATA_MAX_NAME_LEN];
+	struct timespec cb_interval = { 0, 0 };
+	user_data_t ud;
+
 	int i;
 
 	if ((1 != ci->values_num)
@@ -595,39 +595,55 @@ static int c_psql_config_database (oconfig_item_t *ci)
 		return 1;
 	}
 
+	memset (&ud, 0, sizeof (ud));
+
 	db = c_psql_database_new (ci->values[0].value.string);
+	if (db == NULL)
+		return -1;
 
 	for (i = 0; i < ci->children_num; ++i) {
 		oconfig_item_t *c = ci->children + i;
 
 		if (0 == strcasecmp (c->key, "Host"))
-			config_set_s ("Host", &db->host, c);
+			cf_util_get_string (c, &db->host);
 		else if (0 == strcasecmp (c->key, "Port"))
-			config_set_s ("Port", &db->port, c);
+			cf_util_get_service (c, &db->port);
 		else if (0 == strcasecmp (c->key, "User"))
-			config_set_s ("User", &db->user, c);
+			cf_util_get_string (c, &db->user);
 		else if (0 == strcasecmp (c->key, "Password"))
-			config_set_s ("Password", &db->password, c);
+			cf_util_get_string (c, &db->password);
 		else if (0 == strcasecmp (c->key, "SSLMode"))
-			config_set_s ("SSLMode", &db->sslmode, c);
+			cf_util_get_string (c, &db->sslmode);
 		else if (0 == strcasecmp (c->key, "KRBSrvName"))
-			config_set_s ("KRBSrvName", &db->krbsrvname, c);
+			cf_util_get_string (c, &db->krbsrvname);
 		else if (0 == strcasecmp (c->key, "Service"))
-			config_set_s ("Service", &db->service, c);
+			cf_util_get_string (c, &db->service);
 		else if (0 == strcasecmp (c->key, "Query"))
 			udb_query_pick_from_list (c, queries, queries_num,
 					&db->queries, &db->queries_num);
+		else if (0 == strcasecmp (c->key, "Interval"))
+			cf_util_get_cdtime (c, &db->interval);
 		else
 			log_warn ("Ignoring unknown config key \"%s\".", c->key);
 	}
 
 	/* If no `Query' options were given, add the default queries.. */
-	if (db->queries_num == 0)
-	{
+	if (db->queries_num == 0) {
 		for (i = 0; i < def_queries_num; i++)
 			udb_query_pick_from_list_by_name (def_queries[i],
 					queries, queries_num,
 					&db->queries, &db->queries_num);
+	}
+
+	if (db->queries_num > 0) {
+		db->q_prep_areas = (udb_query_preparation_area_t **) calloc (
+				db->queries_num, sizeof (*db->q_prep_areas));
+
+		if (db->q_prep_areas == NULL) {
+			log_err ("Out of memory.");
+			c_psql_database_delete (db);
+			return -1;
+		}
 	}
 
 	for (i = 0; (size_t)i < db->queries_num; ++i) {
@@ -635,7 +651,27 @@ static int c_psql_config_database (oconfig_item_t *ci)
 		data = udb_query_get_user_data (db->queries[i]);
 		if ((data != NULL) && (data->params_num > db->max_params_num))
 			db->max_params_num = data->params_num;
+
+		db->q_prep_areas[i]
+			= udb_query_allocate_preparation_area (db->queries[i]);
+
+		if (db->q_prep_areas[i] == NULL) {
+			log_err ("Out of memory.");
+			c_psql_database_delete (db);
+			return -1;
+		}
 	}
+
+	ud.data = db;
+	ud.free_func = c_psql_database_delete;
+
+	ssnprintf (cb_name, sizeof (cb_name), "postgresql-%s", db->database);
+
+	CDTIME_T_TO_TIMESPEC (db->interval, &cb_interval);
+
+	plugin_register_complex_read ("postgresql", cb_name, c_psql_read,
+			/* interval = */ (db->interval > 0) ? &cb_interval : NULL,
+			&ud);
 	return 0;
 } /* c_psql_config_database */
 
@@ -666,8 +702,7 @@ static int c_psql_config (oconfig_item_t *ci)
 
 		if (0 == strcasecmp (c->key, "Query"))
 			udb_query_create (&queries, &queries_num, c,
-					/* callback = */ config_query_callback,
-					/* legacy mode = */ 1);
+					/* callback = */ config_query_callback);
 		else if (0 == strcasecmp (c->key, "Database"))
 			c_psql_config_database (c);
 		else
@@ -679,7 +714,7 @@ static int c_psql_config (oconfig_item_t *ci)
 void module_register (void)
 {
 	plugin_register_complex_config ("postgresql", c_psql_config);
-	plugin_register_init ("postgresql", c_psql_init);
+	plugin_register_shutdown ("postgresql", c_psql_shutdown);
 } /* module_register */
 
 /* vim: set sw=4 ts=4 tw=78 noexpandtab : */

@@ -1,6 +1,6 @@
 /**
  * collectd - src/plugin.c
- * Copyright (C) 2005-2009  Florian octo Forster
+ * Copyright (C) 2005-2011  Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -16,7 +16,7 @@
  * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  *
  * Authors:
- *   Florian octo Forster <octo at verplant.org>
+ *   Florian octo Forster <octo at collectd.org>
  *   Sebastian Harl <sh at tokkee.org>
  **/
 
@@ -36,7 +36,6 @@
 #include "utils_llist.h"
 #include "utils_heap.h"
 #include "utils_cache.h"
-#include "utils_threshold.h"
 #include "filter_chain.h"
 
 /*
@@ -59,6 +58,7 @@ struct read_func_s
 #define rf_callback rf_super.cf_callback
 #define rf_udata rf_super.cf_udata
 	callback_func_t rf_super;
+	char rf_group[DATA_MAX_NAME_LEN];
 	char rf_name[DATA_MAX_NAME_LEN];
 	int rf_type;
 	struct timespec rf_interval;
@@ -73,6 +73,7 @@ typedef struct read_func_s read_func_t;
 static llist_t *list_init;
 static llist_t *list_write;
 static llist_t *list_flush;
+static llist_t *list_missing;
 static llist_t *list_shutdown;
 static llist_t *list_log;
 static llist_t *list_notification;
@@ -151,7 +152,7 @@ static void destroy_read_heap (void) /* {{{ */
 	{
 		callback_func_t *cf;
 
-		cf = c_head_get_root (read_heap);
+		cf = c_heap_get_root (read_heap);
 		if (cf == NULL)
 			break;
 
@@ -173,7 +174,7 @@ static int register_callback (llist_t **list, /* {{{ */
 		*list = llist_create ();
 		if (*list == NULL)
 		{
-			ERROR ("plugin: create_register_callback: "
+			ERROR ("plugin: register_callback: "
 					"llist_create failed.");
 			destroy_callback (cf);
 			return (-1);
@@ -183,7 +184,7 @@ static int register_callback (llist_t **list, /* {{{ */
 	key = strdup (name);
 	if (key == NULL)
 	{
-		ERROR ("plugin: create_register_callback: strdup failed.");
+		ERROR ("plugin: register_callback: strdup failed.");
 		destroy_callback (cf);
 		return (-1);
 	}
@@ -194,7 +195,7 @@ static int register_callback (llist_t **list, /* {{{ */
 		le = llentry_create (key, cf);
 		if (le == NULL)
 		{
-			ERROR ("plugin: create_register_callback: "
+			ERROR ("plugin: register_callback: "
 					"llentry_create failed.");
 			free (key);
 			destroy_callback (cf);
@@ -209,6 +210,10 @@ static int register_callback (llist_t **list, /* {{{ */
 
 		old_cf = le->value;
 		le->value = cf;
+
+		WARNING ("plugin: register_callback: "
+				"a callback named `%s' already exists - "
+				"overwriting the old entry!", name);
 
 		destroy_callback (old_cf);
 		sfree (key);
@@ -270,28 +275,55 @@ static int plugin_unregister (llist_t *list, const char *name) /* {{{ */
  * object, but it will bitch about a shared object not having a
  * ``module_register'' symbol..
  */
-static int plugin_load_file (char *file)
+static int plugin_load_file (char *file, uint32_t flags)
 {
 	lt_dlhandle dlh;
 	void (*reg_handle) (void);
 
-	DEBUG ("file = %s", file);
-
 	lt_dlinit ();
 	lt_dlerror (); /* clear errors */
 
-	if ((dlh = lt_dlopen (file)) == NULL)
-	{
-		const char *error = lt_dlerror ();
+#if LIBTOOL_VERSION == 2
+	if (flags & PLUGIN_FLAGS_GLOBAL) {
+		lt_dladvise advise;
+		lt_dladvise_init(&advise);
+		lt_dladvise_global(&advise);
+		dlh = lt_dlopenadvise(file, advise);
+		lt_dladvise_destroy(&advise);
+	} else {
+        	dlh = lt_dlopen (file);
+	}
+#else /* if LIBTOOL_VERSION == 1 */
+	if (flags & PLUGIN_FLAGS_GLOBAL)
+		WARNING ("plugin_load_file: The global flag is not supported, "
+				"libtool 2 is required for this.");
+	dlh = lt_dlopen (file);
+#endif
 
-		ERROR ("lt_dlopen (%s) failed: %s", file, error);
-		fprintf (stderr, "lt_dlopen (%s) failed: %s\n", file, error);
+	if (dlh == NULL)
+	{
+		char errbuf[1024] = "";
+
+		ssnprintf (errbuf, sizeof (errbuf),
+				"lt_dlopen (\"%s\") failed: %s. "
+				"The most common cause for this problem are "
+				"missing dependencies. Use ldd(1) to check "
+				"the dependencies of the plugin "
+				"/ shared object.",
+				file, lt_dlerror ());
+
+		ERROR ("%s", errbuf);
+		/* Make sure this is printed to STDERR in any case, but also
+		 * make sure it's printed only once. */
+		if (list_log != NULL)
+			fprintf (stderr, "ERROR: %s\n", errbuf);
+
 		return (1);
 	}
 
 	if ((reg_handle = (void (*) (void)) lt_dlsym (dlh, "module_register")) == NULL)
 	{
-		WARNING ("Couldn't find symbol `module_register' in `%s': %s\n",
+		WARNING ("Couldn't find symbol \"module_register\" in \"%s\": %s\n",
 				file, lt_dlerror ());
 		lt_dlclose (dlh);
 		return (-1);
@@ -302,25 +334,32 @@ static int plugin_load_file (char *file)
 	return (0);
 }
 
+static _Bool timeout_reached(struct timespec timeout)
+{
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	return (now.tv_sec >= timeout.tv_sec && now.tv_usec >= (timeout.tv_nsec / 1000));
+}
+
 static void *plugin_read_thread (void __attribute__((unused)) *args)
 {
 	while (read_loop != 0)
 	{
 		read_func_t *rf;
-		struct timeval now;
+		cdtime_t now;
 		int status;
 		int rf_type;
+		int rc;
 
 		/* Get the read function that needs to be read next. */
-		rf = c_head_get_root (read_heap);
+		rf = c_heap_get_root (read_heap);
 		if (rf == NULL)
 		{
 			struct timespec abstime;
 
-			gettimeofday (&now, /* timezone = */ NULL);
+			now = cdtime ();
 
-			abstime.tv_sec = now.tv_sec + interval_g;
-			abstime.tv_nsec = 1000 * now.tv_usec;
+			CDTIME_T_TO_TIMESPEC (now + interval_g, &abstime);
 
 			pthread_mutex_lock (&read_lock);
 			pthread_cond_timedwait (&read_cond, &read_lock,
@@ -331,23 +370,32 @@ static void *plugin_read_thread (void __attribute__((unused)) *args)
 
 		if ((rf->rf_interval.tv_sec == 0) && (rf->rf_interval.tv_nsec == 0))
 		{
-			gettimeofday (&now, /* timezone = */ NULL);
+			now = cdtime ();
 
-			rf->rf_interval.tv_sec = interval_g;
-			rf->rf_interval.tv_nsec = 0;
+			CDTIME_T_TO_TIMESPEC (interval_g, &rf->rf_interval);
 
 			rf->rf_effective_interval = rf->rf_interval;
 
-			rf->rf_next_read.tv_sec = now.tv_sec;
-			rf->rf_next_read.tv_nsec = 1000 * now.tv_usec;
+			CDTIME_T_TO_TIMESPEC (now, &rf->rf_next_read);
 		}
 
 		/* sleep until this entry is due,
 		 * using pthread_cond_timedwait */
 		pthread_mutex_lock (&read_lock);
-		pthread_cond_timedwait (&read_cond, &read_lock,
+		/* In pthread_cond_timedwait, spurious wakeups are possible
+		 * (and really happen, at least on NetBSD with > 1 CPU), thus
+		 * we need to re-evaluate the condition every time
+		 * pthread_cond_timedwait returns. */
+		rc = 0;
+		while ((read_loop != 0)
+				&& !timeout_reached(rf->rf_next_read)
+				&& rc == 0)
+		{
+			rc = pthread_cond_timedwait (&read_cond, &read_lock,
 				&rf->rf_next_read);
-		/* Must hold `real_lock' when accessing `rf->rf_type'. */
+		}
+
+		/* Must hold `read_lock' when accessing `rf->rf_type'. */
 		rf_type = rf->rf_type;
 		pthread_mutex_unlock (&read_lock);
 
@@ -418,7 +466,7 @@ static void *plugin_read_thread (void __attribute__((unused)) *args)
 		}
 
 		/* update the ``next read due'' field */
-		gettimeofday (&now, /* timezone = */ NULL);
+		now = cdtime ();
 
 		DEBUG ("plugin_read_thread: Effective interval of the "
 				"%s plugin is %i.%09i.",
@@ -435,15 +483,12 @@ static void *plugin_read_thread (void __attribute__((unused)) *args)
 		NORMALIZE_TIMESPEC (rf->rf_next_read);
 
 		/* Check, if `rf_next_read' is in the past. */
-		if ((rf->rf_next_read.tv_sec < now.tv_sec)
-				|| ((rf->rf_next_read.tv_sec == now.tv_sec)
-					&& (rf->rf_next_read.tv_nsec < (1000 * now.tv_usec))))
+		if (TIMESPEC_TO_CDTIME_T (&rf->rf_next_read) < now)
 		{
 			/* `rf_next_read' is in the past. Insert `now'
 			 * so this value doesn't trail off into the
 			 * past too much. */
-			rf->rf_next_read.tv_sec = now.tv_sec;
-			rf->rf_next_read.tv_nsec = 1000 * now.tv_usec;
+			CDTIME_T_TO_TIMESPEC (now, &rf->rf_next_read);
 		}
 
 		DEBUG ("plugin_read_thread: Next read of the %s plugin at %i.%09i.",
@@ -535,7 +580,7 @@ void plugin_set_dir (const char *dir)
 }
 
 #define BUFSIZE 512
-int plugin_load (const char *type)
+int plugin_load (const char *type, uint32_t flags)
 {
 	DIR  *dh;
 	const char *dir;
@@ -597,7 +642,7 @@ int plugin_load (const char *type)
 			continue;
 		}
 
-		if (plugin_load_file (filename) == 0)
+		if (plugin_load_file (filename, flags) == 0)
 		{
 			/* success */
 			ret = 0;
@@ -693,6 +738,17 @@ static int plugin_insert_read (read_func_t *rf)
 		}
 	}
 
+	le = llist_search (read_list, rf->rf_name);
+	if (le != NULL)
+	{
+		pthread_mutex_unlock (&read_lock);
+		WARNING ("The read function \"%s\" is already registered. "
+				"Check for duplicate \"LoadPlugin\" lines "
+				"in your configuration!",
+				rf->rf_name);
+		return (EINVAL);
+	}
+
 	le = llentry_create (rf->rf_name, rf);
 	if (le == NULL)
 	{
@@ -721,45 +777,54 @@ int plugin_register_read (const char *name,
 		int (*callback) (void))
 {
 	read_func_t *rf;
+	int status;
 
-	rf = (read_func_t *) malloc (sizeof (read_func_t));
+	rf = malloc (sizeof (*rf));
 	if (rf == NULL)
 	{
-		char errbuf[1024];
-		ERROR ("plugin_register_read: malloc failed: %s",
-				sstrerror (errno, errbuf, sizeof (errbuf)));
-		return (-1);
+		ERROR ("plugin_register_read: malloc failed.");
+		return (ENOMEM);
 	}
 
 	memset (rf, 0, sizeof (read_func_t));
 	rf->rf_callback = (void *) callback;
 	rf->rf_udata.data = NULL;
 	rf->rf_udata.free_func = NULL;
+	rf->rf_group[0] = '\0';
 	sstrncpy (rf->rf_name, name, sizeof (rf->rf_name));
 	rf->rf_type = RF_SIMPLE;
 	rf->rf_interval.tv_sec = 0;
 	rf->rf_interval.tv_nsec = 0;
 	rf->rf_effective_interval = rf->rf_interval;
 
-	return (plugin_insert_read (rf));
+	status = plugin_insert_read (rf);
+	if (status != 0)
+		sfree (rf);
+
+	return (status);
 } /* int plugin_register_read */
 
-int plugin_register_complex_read (const char *name,
+int plugin_register_complex_read (const char *group, const char *name,
 		plugin_read_cb callback,
 		const struct timespec *interval,
 		user_data_t *user_data)
 {
 	read_func_t *rf;
+	int status;
 
-	rf = (read_func_t *) malloc (sizeof (read_func_t));
+	rf = malloc (sizeof (*rf));
 	if (rf == NULL)
 	{
 		ERROR ("plugin_register_complex_read: malloc failed.");
-		return (-1);
+		return (ENOMEM);
 	}
 
 	memset (rf, 0, sizeof (read_func_t));
 	rf->rf_callback = (void *) callback;
+	if (group != NULL)
+		sstrncpy (rf->rf_group, group, sizeof (rf->rf_group));
+	else
+		rf->rf_group[0] = '\0';
 	sstrncpy (rf->rf_name, name, sizeof (rf->rf_name));
 	rf->rf_type = RF_COMPLEX;
 	if (interval != NULL)
@@ -779,7 +844,11 @@ int plugin_register_complex_read (const char *name,
 		rf->rf_udata = *user_data;
 	}
 
-	return (plugin_insert_read (rf));
+	status = plugin_insert_read (rf);
+	if (status != 0)
+		sfree (rf);
+
+	return (status);
 } /* int plugin_register_complex_read */
 
 int plugin_register_write (const char *name,
@@ -796,7 +865,14 @@ int plugin_register_flush (const char *name,
 				(void *) callback, ud));
 } /* int plugin_register_flush */
 
-int plugin_register_shutdown (char *name,
+int plugin_register_missing (const char *name,
+		plugin_missing_cb callback, user_data_t *ud)
+{
+	return (create_register_callback (&list_missing, name,
+				(void *) callback, ud));
+} /* int plugin_register_missing */
+
+int plugin_register_shutdown (const char *name,
 		int (*callback) (void))
 {
 	return (create_register_callback (&list_shutdown, name,
@@ -911,6 +987,67 @@ int plugin_unregister_read (const char *name) /* {{{ */
 	return (0);
 } /* }}} int plugin_unregister_read */
 
+static int compare_read_func_group (llentry_t *e, void *ud) /* {{{ */
+{
+	read_func_t *rf    = e->value;
+	char        *group = ud;
+
+	return strcmp (rf->rf_group, (const char *)group);
+} /* }}} int compare_read_func_group */
+
+int plugin_unregister_read_group (const char *group) /* {{{ */
+{
+	llentry_t *le;
+	read_func_t *rf;
+
+	int found = 0;
+
+	if (group == NULL)
+		return (-ENOENT);
+
+	pthread_mutex_lock (&read_lock);
+
+	if (read_list == NULL)
+	{
+		pthread_mutex_unlock (&read_lock);
+		return (-ENOENT);
+	}
+
+	while (42)
+	{
+		le = llist_search_custom (read_list,
+				compare_read_func_group, (void *)group);
+
+		if (le == NULL)
+			break;
+
+		++found;
+
+		llist_remove (read_list, le);
+
+		rf = le->value;
+		assert (rf != NULL);
+		rf->rf_type = RF_REMOVE;
+
+		llentry_destroy (le);
+
+		DEBUG ("plugin_unregister_read_group: "
+				"Marked `%s' (group `%s') for removal.",
+				rf->rf_name, group);
+	}
+
+	pthread_mutex_unlock (&read_lock);
+
+	if (found == 0)
+	{
+		WARNING ("plugin_unregister_read_group: No such "
+				"group of read function: %s", group);
+		return (-ENOENT);
+	}
+
+	return (0);
+} /* }}} int plugin_unregister_read_group */
+
 int plugin_unregister_write (const char *name)
 {
 	return (plugin_unregister (list_write, name));
@@ -919,6 +1056,11 @@ int plugin_unregister_write (const char *name)
 int plugin_unregister_flush (const char *name)
 {
 	return (plugin_unregister (list_flush, name));
+}
+
+int plugin_unregister_missing (const char *name)
+{
+	return (plugin_unregister (list_missing, name));
 }
 
 int plugin_unregister_shutdown (const char *name)
@@ -1036,7 +1178,7 @@ int plugin_read_all_once (void)
 	{
 		read_func_t *rf;
 
-		rf = c_head_get_root (read_heap);
+		rf = c_heap_get_root (read_heap);
 		if (rf == NULL)
 			break;
 
@@ -1144,7 +1286,7 @@ int plugin_write (const char *plugin, /* {{{ */
   return (status);
 } /* }}} int plugin_write */
 
-int plugin_flush (const char *plugin, int timeout, const char *identifier)
+int plugin_flush (const char *plugin, cdtime_t timeout, const char *identifier)
 {
   llentry_t *le;
 
@@ -1189,7 +1331,8 @@ void plugin_shutdown_all (void)
 
 	destroy_read_heap ();
 
-	plugin_flush (/* plugin = */ NULL, /* timeout = */ -1,
+	plugin_flush (/* plugin = */ NULL,
+			/* timeout = */ 0,
 			/* identifier = */ NULL);
 
 	le = NULL;
@@ -1219,12 +1362,51 @@ void plugin_shutdown_all (void)
 	 * the real free function when registering the write callback. This way
 	 * the data isn't freed twice. */
 	destroy_all_callbacks (&list_flush);
+	destroy_all_callbacks (&list_missing);
 	destroy_all_callbacks (&list_write);
 
 	destroy_all_callbacks (&list_notification);
 	destroy_all_callbacks (&list_shutdown);
 	destroy_all_callbacks (&list_log);
 } /* void plugin_shutdown_all */
+
+int plugin_dispatch_missing (const value_list_t *vl) /* {{{ */
+{
+  llentry_t *le;
+
+  if (list_missing == NULL)
+    return (0);
+
+  le = llist_head (list_missing);
+  while (le != NULL)
+  {
+    callback_func_t *cf;
+    plugin_missing_cb callback;
+    int status;
+
+    cf = le->value;
+    callback = cf->cf_callback;
+
+    status = (*callback) (vl, &cf->cf_udata);
+    if (status != 0)
+    {
+      if (status < 0)
+      {
+        ERROR ("plugin_dispatch_missing: Callback function \"%s\" "
+            "failed with status %i.",
+            le->key, status);
+        return (status);
+      }
+      else
+      {
+        return (0);
+      }
+    }
+
+    le = le->next;
+  }
+  return (0);
+} /* int }}} plugin_dispatch_missing */
 
 int plugin_dispatch_values (value_list_t *vl)
 {
@@ -1241,7 +1423,8 @@ int plugin_dispatch_values (value_list_t *vl)
 	if ((vl == NULL) || (vl->type[0] == 0)
 			|| (vl->values == NULL) || (vl->values_len < 1))
 	{
-		ERROR ("plugin_dispatch_values: Invalid value list.");
+		ERROR ("plugin_dispatch_values: Invalid value list "
+				"from plugin %s.", vl->plugin);
 		return (-1);
 	}
 
@@ -1267,21 +1450,27 @@ int plugin_dispatch_values (value_list_t *vl)
 
 	if (c_avl_get (data_sets, vl->type, (void *) &ds) != 0)
 	{
-		INFO ("plugin_dispatch_values: Dataset not found: %s", vl->type);
+		char ident[6 * DATA_MAX_NAME_LEN];
+
+		FORMAT_VL (ident, sizeof (ident), vl);
+		INFO ("plugin_dispatch_values: Dataset not found: %s "
+				"(from \"%s\"), check your types.db!",
+				vl->type, ident);
 		return (-1);
 	}
 
 	if (vl->time == 0)
-		vl->time = time (NULL);
+		vl->time = cdtime ();
 
 	if (vl->interval <= 0)
 		vl->interval = interval_g;
 
-	DEBUG ("plugin_dispatch_values: time = %u; interval = %i; "
+	DEBUG ("plugin_dispatch_values: time = %.3f; interval = %.3f; "
 			"host = %s; "
 			"plugin = %s; plugin_instance = %s; "
 			"type = %s; type_instance = %s;",
-			(unsigned int) vl->time, vl->interval,
+			CDTIME_T_TO_DOUBLE (vl->time),
+			CDTIME_T_TO_DOUBLE (vl->interval),
 			vl->host,
 			vl->plugin, vl->plugin_instance,
 			vl->type, vl->type_instance);
@@ -1365,9 +1554,6 @@ int plugin_dispatch_values (value_list_t *vl)
 	/* Update the value cache */
 	uc_update (ds, vl);
 
-	/* Initiate threshold checking */
-	ut_check_threshold (ds, vl);
-
 	if (post_cache_chain != NULL)
 	{
 		status = fc_process_chain (ds, vl, post_cache_chain);
@@ -1400,15 +1586,61 @@ int plugin_dispatch_values (value_list_t *vl)
 	return (0);
 } /* int plugin_dispatch_values */
 
+int plugin_dispatch_values_secure (const value_list_t *vl)
+{
+  value_list_t vl_copy;
+  int status;
+
+  if (vl == NULL)
+    return EINVAL;
+
+  memcpy (&vl_copy, vl, sizeof (vl_copy));
+
+  /* Write callbacks must not change the values and meta pointers, so we can
+   * savely skip copying those and make this more efficient. */
+  if ((pre_cache_chain == NULL) && (post_cache_chain == NULL))
+    return (plugin_dispatch_values (&vl_copy));
+
+  /* Set pointers to NULL, just to be on the save side. */
+  vl_copy.values = NULL;
+  vl_copy.meta = NULL;
+
+  vl_copy.values = malloc (sizeof (*vl_copy.values) * vl->values_len);
+  if (vl_copy.values == NULL)
+  {
+    ERROR ("plugin_dispatch_values_secure: malloc failed.");
+    return (ENOMEM);
+  }
+  memcpy (vl_copy.values, vl->values, sizeof (*vl_copy.values) * vl->values_len);
+
+  if (vl->meta != NULL)
+  {
+    vl_copy.meta = meta_data_clone (vl->meta);
+    if (vl_copy.meta == NULL)
+    {
+      ERROR ("plugin_dispatch_values_secure: meta_data_clone failed.");
+      free (vl_copy.values);
+      return (ENOMEM);
+    }
+  } /* if (vl->meta) */
+
+  status = plugin_dispatch_values (&vl_copy);
+
+  meta_data_destroy (vl_copy.meta);
+  free (vl_copy.values);
+
+  return (status);
+} /* int plugin_dispatch_values_secure */
+
 int plugin_dispatch_notification (const notification_t *notif)
 {
 	llentry_t *le;
 	/* Possible TODO: Add flap detection here */
 
 	DEBUG ("plugin_dispatch_notification: severity = %i; message = %s; "
-			"time = %u; host = %s;",
+			"time = %.3f; host = %s;",
 			notif->severity, notif->message,
-			(unsigned int) notif->time, notif->host);
+			CDTIME_T_TO_DOUBLE (notif->time), notif->host);
 
 	/* Nobody cares for notifications */
 	if (list_notification == NULL)
@@ -1443,14 +1675,6 @@ void plugin_log (int level, const char *format, ...)
 	va_list ap;
 	llentry_t *le;
 
-	if (list_log == NULL)
-	{
-		va_start (ap, format);
-		vfprintf (stderr, format, ap);
-		va_end (ap);
-		return;
-	}
-
 #if !COLLECT_DEBUG
 	if (level >= LOG_DEBUG)
 		return;
@@ -1460,6 +1684,12 @@ void plugin_log (int level, const char *format, ...)
 	vsnprintf (msg, sizeof (msg), format, ap);
 	msg[sizeof (msg) - 1] = '\0';
 	va_end (ap);
+
+	if (list_log == NULL)
+	{
+		fprintf (stderr, "%s\n", msg);
+		return;
+	}
 
 	le = llist_head (list_log);
 	while (le != NULL)
@@ -1475,6 +1705,44 @@ void plugin_log (int level, const char *format, ...)
 		le = le->next;
 	}
 } /* void plugin_log */
+
+int parse_log_severity (const char *severity)
+{
+	int log_level = -1;
+
+	if ((0 == strcasecmp (severity, "emerg"))
+			|| (0 == strcasecmp (severity, "alert"))
+			|| (0 == strcasecmp (severity, "crit"))
+			|| (0 == strcasecmp (severity, "err")))
+		log_level = LOG_ERR;
+	else if (0 == strcasecmp (severity, "warning"))
+		log_level = LOG_WARNING;
+	else if (0 == strcasecmp (severity, "notice"))
+		log_level = LOG_NOTICE;
+	else if (0 == strcasecmp (severity, "info"))
+		log_level = LOG_INFO;
+#if COLLECT_DEBUG
+	else if (0 == strcasecmp (severity, "debug"))
+		log_level = LOG_DEBUG;
+#endif /* COLLECT_DEBUG */
+
+	return (log_level);
+} /* int parse_log_severity */
+
+int parse_notif_severity (const char *severity)
+{
+	int notif_severity = -1;
+
+	if (strcasecmp (severity, "FAILURE") == 0)
+		notif_severity = NOTIF_FAILURE;
+	else if (strcmp (severity, "OKAY") == 0)
+		notif_severity = NOTIF_OKAY;
+	else if ((strcmp (severity, "WARNING") == 0)
+			|| (strcmp (severity, "WARN") == 0))
+		notif_severity = NOTIF_WARNING;
+
+	return (notif_severity);
+} /* int parse_notif_severity */
 
 const data_set_t *plugin_get_ds (const char *name)
 {
@@ -1544,7 +1812,7 @@ static int plugin_notification_meta_add (notification_t *n,
     }
     case NM_TYPE_BOOLEAN:
     {
-      meta->nm_value.nm_boolean = *((bool *) value);
+      meta->nm_value.nm_boolean = *((_Bool *) value);
       break;
     }
     default:
@@ -1598,7 +1866,7 @@ int plugin_notification_meta_add_double (notification_t *n,
 
 int plugin_notification_meta_add_boolean (notification_t *n,
     const char *name,
-    bool value)
+    _Bool value)
 {
   return (plugin_notification_meta_add (n, name, NM_TYPE_BOOLEAN, &value));
 }

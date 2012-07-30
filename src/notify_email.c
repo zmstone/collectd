@@ -1,6 +1,7 @@
 /**
  * collectd - src/notify_email.c
  * Copyright (C) 2008  Oleg King
+ * Copyright (C) 2010  Florian Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -18,6 +19,7 @@
  *
  * Authors:
  *   Oleg King <king2 at kaluga.ru>
+ *   Florian Forster <octo at collectd.org>
  **/
 
 #include "collectd.h"
@@ -26,6 +28,7 @@
 
 #include <auth-client.h>
 #include <libesmtp.h>
+#include <pthread.h>
 
 #define MAXSTRING               256
 
@@ -45,6 +48,7 @@ static char **recipients;
 static int recipients_len = 0;
 
 static smtp_session_t session;
+static pthread_mutex_t session_lock = PTHREAD_MUTEX_INITIALIZER;
 static smtp_message_t message;
 static auth_context_t authctx = NULL;
 
@@ -113,17 +117,23 @@ static int notify_email_init (void)
 {
   char server[MAXSTRING];
 
+  ssnprintf(server, sizeof (server), "%s:%i",
+      (smtp_host == NULL) ? DEFAULT_SMTP_HOST : smtp_host,
+      smtp_port);
+
+  pthread_mutex_lock (&session_lock);
+
   auth_client_init();
-  if (!(session = smtp_create_session ())) {
+
+  session = smtp_create_session ();
+  if (session == NULL) {
+    pthread_mutex_unlock (&session_lock);
     ERROR ("notify_email plugin: cannot create SMTP session");
     return (-1);
   }
 
   smtp_set_monitorcb (session, monitor_cb, NULL, 1);
   smtp_set_hostname (session, hostname_g);
-  ssnprintf(server, sizeof (server), "%s:%i",
-      (smtp_host == NULL) ? DEFAULT_SMTP_HOST : smtp_host,
-      smtp_port);
   smtp_set_server (session, server);
 
   if (smtp_user && smtp_password) {
@@ -133,18 +143,30 @@ static int notify_email_init (void)
   }
 
   if ( !smtp_auth_set_context (session, authctx)) {
+    pthread_mutex_unlock (&session_lock);
     ERROR ("notify_email plugin: cannot set SMTP auth context");
     return (-1);   
   }
 
+  pthread_mutex_unlock (&session_lock);
   return (0);
 } /* int notify_email_init */
 
 static int notify_email_shutdown (void)
 {
-  smtp_destroy_session (session);
-  auth_destroy_context (authctx);
+  pthread_mutex_lock (&session_lock);
+
+  if (session != NULL)
+    smtp_destroy_session (session);
+  session = NULL;
+
+  if (authctx != NULL)
+    auth_destroy_context (authctx);
+  authctx = NULL;
+
   auth_client_exit();
+
+  pthread_mutex_unlock (&session_lock);
   return (0);
 } /* int notify_email_shutdown */
 
@@ -206,8 +228,8 @@ static int notify_email_config (const char *key, const char *value)
 static int notify_email_notification (const notification_t *n,
     user_data_t __attribute__((unused)) *user_data)
 {
-  smtp_recipient_t recipient;
 
+  time_t tt;
   struct tm timestamp_tm;
   char timestamp_str[64];
 
@@ -227,7 +249,8 @@ static int notify_email_notification (const notification_t *n,
       (email_subject == NULL) ? DEFAULT_SMTP_SUBJECT : email_subject,
       severity, n->host);
 
-  localtime_r (&n->time, &timestamp_tm);
+  tt = CDTIME_T_TO_TIME_T (n->time);
+  localtime_r (&tt, &timestamp_tm);
   strftime (timestamp_str, sizeof (timestamp_str), "%Y-%m-%d %H:%M:%S",
       &timestamp_tm);
   timestamp_str[sizeof (timestamp_str) - 1] = '\0';
@@ -248,7 +271,16 @@ static int notify_email_notification (const notification_t *n,
       n->host,
       n->message);
 
+  pthread_mutex_lock (&session_lock);
+
+  if (session == NULL) {
+    /* Initialization failed or we're in the process of shutting down. */
+    pthread_mutex_unlock (&session_lock);
+    return (-1);
+  }
+
   if (!(message = smtp_add_message (session))) {
+    pthread_mutex_unlock (&session_lock);
     ERROR ("notify_email plugin: cannot set SMTP message");
     return (-1);   
   }
@@ -257,23 +289,27 @@ static int notify_email_notification (const notification_t *n,
   smtp_set_message_str (message, buf);
 
   for (i = 0; i < recipients_len; i++)
-    recipient = smtp_add_recipient (message, recipients[i]);
+    smtp_add_recipient (message, recipients[i]);
 
   /* Initiate a connection to the SMTP server and transfer the message. */
   if (!smtp_start_session (session)) {
     char buf[MAXSTRING];
     ERROR ("notify_email plugin: SMTP server problem: %s",
         smtp_strerror (smtp_errno (), buf, sizeof buf));
+    pthread_mutex_unlock (&session_lock);
     return (-1);
   } else {
+    #if COLLECT_DEBUG
     const smtp_status_t *status;
     /* Report on the success or otherwise of the mail transfer. */
     status = smtp_message_transfer_status (message);
     DEBUG ("notify_email plugin: SMTP server report: %d %s",
-        status->code, (status->text != NULL) ? status->text : "\n");
+      status->code, (status->text != NULL) ? status->text : "\n");
+    #endif
     smtp_enumerate_recipients (message, print_recipient_status, NULL);
   }
 
+  pthread_mutex_unlock (&session_lock);
   return (0);
 } /* int notify_email_notification */
 

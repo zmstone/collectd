@@ -33,6 +33,7 @@ src/stamp-h1
 .libs/
 src/collectd
 src/collectd-nagios
+src/collectdctl
 src/collectdmon
 src/*.1
 src/*.5
@@ -61,3 +62,13 @@ bindings/perl/pm_to_blib
 # java stuff
 bindings/java/java-build-stamp
 bindings/java/org/collectd/api/*.class
+bindings/java/org/collectd/java/*.class
+
+# python stuff
+*.pyc
+
+# tag stuff
+src/tags
+
+# backup stuff
+*~

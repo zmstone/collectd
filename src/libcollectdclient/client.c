@@ -164,26 +164,13 @@ static int lcc_set_errno (lcc_connection_t *c, int err) /* {{{ */
   return (0);
 } /* }}} int lcc_set_errno */
 
-/* lcc_strdup: Since `strdup' is an XSI extension, we provide our own version
- * here. */
-__attribute__((malloc, nonnull (1)))
-static char *lcc_strdup (const char *str) /* {{{ */
-{
-  size_t strsize;
-  char *ret;
-
-  strsize = strlen (str) + 1;
-  ret = (char *) malloc (strsize);
-  if (ret != NULL)
-    memcpy (ret, str, strsize);
-  return (ret);
-} /* }}} char *lcc_strdup */
-
-__attribute__((nonnull (1, 2)))
 static char *lcc_strescape (char *dest, const char *src, size_t dest_size) /* {{{ */
 {
   size_t dest_pos;
   size_t src_pos;
+
+  if ((dest == NULL) || (src == NULL))
+    return (NULL);
 
   dest_pos = 0;
   src_pos = 0;
@@ -240,6 +227,53 @@ static void lcc_chomp (char *str) /* {{{ */
     str_len--;
   }
 } /* }}} void lcc_chomp */
+
+static int lcc_identifier_cmp (const void *a, const void *b)
+{
+  const lcc_identifier_t *ident_a, *ident_b;
+
+  int status;
+
+  ident_a = a;
+  ident_b = b;
+
+  status = strcasecmp (ident_a->host, ident_b->host);
+  if (status != 0)
+    return (status);
+
+  status = strcmp (ident_a->plugin, ident_b->plugin);
+  if (status != 0)
+    return (status);
+
+  if ((*ident_a->plugin_instance != '\0') || (*ident_b->plugin_instance != '\0'))
+  {
+    if (*ident_a->plugin_instance == '\0')
+      return (-1);
+    else if (*ident_b->plugin_instance == '\0')
+      return (1);
+
+    status = strcmp (ident_a->plugin_instance, ident_b->plugin_instance);
+    if (status != 0)
+      return (status);
+  }
+
+  status = strcmp (ident_a->type, ident_b->type);
+  if (status != 0)
+    return (status);
+
+  if ((*ident_a->type_instance != '\0') || (*ident_b->type_instance != '\0'))
+  {
+    if (*ident_a->type_instance == '\0')
+      return (-1);
+    else if (*ident_b->type_instance == '\0')
+      return (1);
+
+    status = strcmp (ident_a->type_instance, ident_b->type_instance);
+    if (status != 0)
+      return (status);
+  }
+  return (0);
+} /* }}} int lcc_identifier_cmp */
 
 static void lcc_response_free (lcc_response_t *res) /* {{{ */
 {
@@ -338,7 +372,7 @@ static int lcc_receive (lcc_connection_t *c, /* {{{ */
     lcc_chomp (buffer);
     LCC_DEBUG ("receive: <-- %s\n", buffer);
 
-    res.lines[i] = lcc_strdup (buffer);
+    res.lines[i] = strdup (buffer);
     if (res.lines[i] == NULL)
     {
       lcc_set_errno (c, ENOMEM);
@@ -733,7 +767,7 @@ int lcc_getval (lcc_connection_t *c, lcc_identifier_t *ident, /* {{{ */
 
     if (values_names != NULL)
     {
-      values_names[i] = lcc_strdup (key);
+      values_names[i] = strdup (key);
       if (values_names[i] == NULL)
         BAIL_OUT (ENOMEM);
     }
@@ -745,6 +779,8 @@ int lcc_getval (lcc_connection_t *c, lcc_identifier_t *ident, /* {{{ */
     *ret_values = values;
   if (ret_values_names != NULL)
     *ret_values_names = values_names;
+
+  lcc_response_free (&res);
 
   return (0);
 } /* }}} int lcc_getval */
@@ -777,9 +813,9 @@ int lcc_putval (lcc_connection_t *c, const lcc_value_list_t *vl) /* {{{ */
     SSTRCATF (command, " interval=%i", vl->interval);
 
   if (vl->time > 0)
-    SSTRCATF (command, "%u", (unsigned int) vl->time);
+    SSTRCATF (command, " %u", (unsigned int) vl->time);
   else
-    SSTRCAT (command, "N");
+    SSTRCAT (command, " N");
 
   for (i = 0; i < vl->values_len; i++)
   {
@@ -788,7 +824,7 @@ int lcc_putval (lcc_connection_t *c, const lcc_value_list_t *vl) /* {{{ */
     else if (vl->values_types[i] == LCC_TYPE_GAUGE)
     {
       if (isnan (vl->values[i].gauge))
-        SSTRCPY (command, ":U");
+        SSTRCATF (command, ":U");
       else
         SSTRCATF (command, ":%g", vl->values[i].gauge);
     }
@@ -1013,7 +1049,7 @@ int lcc_string_to_identifier (lcc_connection_t *c, /* {{{ */
   char *type;
   char *type_instance;
 
-  string_copy = lcc_strdup (string);
+  string_copy = strdup (string);
   if (string_copy == NULL)
   {
     lcc_set_errno (c, ENOMEM);
@@ -1068,5 +1104,18 @@ int lcc_string_to_identifier (lcc_connection_t *c, /* {{{ */
   free (string_copy);
   return (0);
 } /* }}} int lcc_string_to_identifier */
+
+int lcc_sort_identifiers (lcc_connection_t *c, /* {{{ */
+    lcc_identifier_t *idents, size_t idents_num)
+{
+  if (idents == NULL)
+  {
+    lcc_set_errno (c, EINVAL);
+    return (-1);
+  }
+
+  qsort (idents, idents_num, sizeof (*idents), lcc_identifier_cmp);
+  return (0);
+} /* }}} int lcc_sort_identifiers */
 
 /* vim: set sw=2 sts=2 et fdm=marker : */

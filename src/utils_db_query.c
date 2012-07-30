@@ -39,22 +39,6 @@ struct udb_result_s
   char   **values;
   size_t   values_num;
 
-  /* Preparation area */
-  const   data_set_t *ds;
-  size_t *instances_pos;
-  size_t *values_pos;
-  char  **instances_buffer;
-  char  **values_buffer;
-
-  /* Legacy data */
-  int legacy_mode;
-  size_t legacy_position;
-  /* When in legacy mode:
-   * - type/ds hold the format of the data
-   * - instance_prefix is used as type-instance if non-NULL
-   * - legacy_position holds the index of the column to use as value.
-   */
-
   udb_result_t *next;
 }; /* }}} */
 
@@ -64,18 +48,34 @@ struct udb_query_s /* {{{ */
   char *statement;
   void *user_data;
 
-  int legacy_mode;
-
   unsigned int min_version;
   unsigned int max_version;
 
-  /* Preparation area */
+  udb_result_t *results;
+}; /* }}} */
+
+struct udb_result_preparation_area_s /* {{{ */
+{
+  const   data_set_t *ds;
+  size_t *instances_pos;
+  size_t *values_pos;
+  char  **instances_buffer;
+  char  **values_buffer;
+
+  struct udb_result_preparation_area_s *next;
+}; /* }}} */
+typedef struct udb_result_preparation_area_s udb_result_preparation_area_t;
+
+struct udb_query_preparation_area_s /* {{{ */
+{
   size_t column_num;
   char *host;
   char *plugin;
   char *db_name;
 
-  udb_result_t *results;
+  cdtime_t interval;
+
+  udb_result_preparation_area_t *result_prep_areas;
 }; /* }}} */
 
 /*
@@ -180,202 +180,46 @@ static int udb_config_set_uint (unsigned int *ret_value, /* {{{ */
 } /* }}} int udb_config_set_uint */
 
 /*
- * Legacy result private functions
- */
-static void udb_legacy_result_finish_result (udb_result_t *r) /* {{{ */
-{
-  if (r == NULL)
-    return;
-
-  assert (r->legacy_mode == 1);
-
-  r->ds = NULL;
-} /* }}} void udb_legacy_result_finish_result */
-
-static int udb_legacy_result_handle_result (udb_result_t *r, /* {{{ */
-    udb_query_t *q, char **column_values)
-{
-  value_list_t vl = VALUE_LIST_INIT;
-  value_t value;
-  char *value_str;
-
-  assert (r->legacy_mode == 1);
-  assert (r->ds != NULL);
-  assert (r->ds->ds_num == 1);
-
-  vl.values = &value;
-  vl.values_len = 1;
-
-  value_str = column_values[r->legacy_position];
-  if (0 != parse_value (value_str, &vl.values[0], r->ds->ds[0].type))
-  {
-    ERROR ("db query utils: udb_legacy_result_handle_result: "
-        "Parsing `%s' as %s failed.", value_str,
-        DS_TYPE_TO_STRING (r->ds->ds[0].type));
-    errno = EINVAL;
-    return (-1);
-  }
-
-  sstrncpy (vl.host, q->host, sizeof (vl.host));
-  sstrncpy (vl.plugin, q->plugin, sizeof (vl.plugin));
-  sstrncpy (vl.plugin_instance, q->db_name, sizeof (vl.type_instance));
-  sstrncpy (vl.type, r->type, sizeof (vl.type));
-
-  if (r->instance_prefix != NULL)
-    sstrncpy (vl.type_instance, r->instance_prefix,
-        sizeof (vl.type_instance));
-
-  plugin_dispatch_values (&vl);
-
-  return (0);
-} /* }}} int udb_legacy_result_handle_result */
-
-static int udb_legacy_result_prepare_result (udb_result_t *r, /* {{{ */
-    char **column_names, size_t column_num)
-{
-  if (r == NULL)
-    return (-EINVAL);
-
-  assert (r->legacy_mode == 1);
-
-  /* Make sure previous preparations are cleaned up. */
-  udb_legacy_result_finish_result (r);
-
-  if (r->legacy_position >= column_num)
-  {
-    ERROR ("db query utils: The legacy configuration specified (at least) "
-        "%zu `Column's, but the query returned only %zu columns!",
-        r->legacy_position + 1, column_num);
-    return (-ENOENT);
-  }
-
-  /* Read `ds' and check number of values {{{ */
-  r->ds = plugin_get_ds (r->type);
-  if (r->ds == NULL)
-  {
-    ERROR ("db query utils: udb_result_prepare_result: Type `%s' is not "
-        "known by the daemon. See types.db(5) for details.",
-        r->type);
-    return (-1);
-  }
-
-  if (r->ds->ds_num != 1)
-  {
-    ERROR ("db query utils: udb_result_prepare_result: The type `%s' "
-        "requires exactly %i values, but the legacy configuration "
-        "requires exactly one!",
-        r->type,
-        r->ds->ds_num);
-    return (-1);
-  }
-  /* }}} */
-
-  return (0);
-} /* }}} int udb_legacy_result_prepare_result */
-
-static int udb_legacy_result_create (const char *query_name, /* {{{ */
-    udb_result_t **r_head, oconfig_item_t *ci, size_t position)
-{
-  udb_result_t *r;
-
-  if ((ci->values_num < 1) || (ci->values_num > 2)
-      || (ci->values[0].type != OCONFIG_TYPE_STRING)
-      || ((ci->values_num == 2)
-        && (ci->values[1].type != OCONFIG_TYPE_STRING)))
-  {
-    WARNING ("db query utils: The `Column' block needs either one or two "
-        "string arguments.");
-    return (-1);
-  }
-
-  r = (udb_result_t *) malloc (sizeof (*r));
-  if (r == NULL)
-  {
-    ERROR ("db query utils: malloc failed.");
-    return (-1);
-  }
-  memset (r, 0, sizeof (*r));
-
-  r->legacy_mode = 1;
-  r->legacy_position = position;
-
-  r->type = strdup (ci->values[0].value.string);
-  if (r->type == NULL)
-  {
-    ERROR ("db query utils: strdup failed.");
-    free (r);
-    return (-1);
-  }
-
-  r->instance_prefix = NULL;
-  if (ci->values_num == 2)
-  {
-    r->instance_prefix = strdup (ci->values[1].value.string);
-    if (r->instance_prefix == NULL)
-    {
-      ERROR ("db query utils: strdup failed.");
-      free (r->type);
-      free (r);
-      return (-1);
-    }
-  }
-
-  /* If all went well, add this result to the list of results. */
-  if (*r_head == NULL)
-  {
-    *r_head = r;
-  }
-  else
-  {
-    udb_result_t *last;
-
-    last = *r_head;
-    while (last->next != NULL)
-      last = last->next;
-
-    last->next = r;
-  }
-
-  return (0);
-} /* }}} int udb_legacy_result_create */
-
-/*
  * Result private functions
  */
-static int udb_result_submit (udb_result_t *r, udb_query_t *q) /* {{{ */
+static int udb_result_submit (udb_result_t *r, /* {{{ */
+    udb_result_preparation_area_t *r_area,
+    const udb_query_t const *q, udb_query_preparation_area_t *q_area)
 {
   value_list_t vl = VALUE_LIST_INIT;
   size_t i;
 
   assert (r != NULL);
-  assert (r->legacy_mode == 0);
-  assert (r->ds != NULL);
-  assert (((size_t) r->ds->ds_num) == r->values_num);
+  assert (r_area->ds != NULL);
+  assert (((size_t) r_area->ds->ds_num) == r->values_num);
 
-  vl.values = (value_t *) calloc (r->ds->ds_num, sizeof (value_t));
+  vl.values = (value_t *) calloc (r_area->ds->ds_num, sizeof (value_t));
   if (vl.values == NULL)
   {
     ERROR ("db query utils: malloc failed.");
     return (-1);
   }
-  vl.values_len = r->ds->ds_num;
+  vl.values_len = r_area->ds->ds_num;
 
   for (i = 0; i < r->values_num; i++)
   {
-    char *value_str = r->values_buffer[i];
+    char *value_str = r_area->values_buffer[i];
 
-    if (0 != parse_value (value_str, &vl.values[i], r->ds->ds[i].type))
+    if (0 != parse_value (value_str, &vl.values[i], r_area->ds->ds[i].type))
     {
       ERROR ("db query utils: udb_result_submit: Parsing `%s' as %s failed.",
-          value_str, DS_TYPE_TO_STRING (r->ds->ds[i].type));
+          value_str, DS_TYPE_TO_STRING (r_area->ds->ds[i].type));
       errno = EINVAL;
       return (-1);
     }
   }
 
-  sstrncpy (vl.host, q->host, sizeof (vl.host));
-  sstrncpy (vl.plugin, q->plugin, sizeof (vl.plugin));
-  sstrncpy (vl.plugin_instance, q->db_name, sizeof (vl.type_instance));
+  if (q_area->interval > 0)
+    vl.interval = q_area->interval;
+
+  sstrncpy (vl.host, q_area->host, sizeof (vl.host));
+  sstrncpy (vl.plugin, q_area->plugin, sizeof (vl.plugin));
+  sstrncpy (vl.plugin_instance, q_area->db_name, sizeof (vl.type_instance));
   sstrncpy (vl.type, r->type, sizeof (vl.type));
 
   /* Set vl.type_instance {{{ */
@@ -392,13 +236,14 @@ static int udb_result_submit (udb_result_t *r, udb_query_t *q) /* {{{ */
     if (r->instance_prefix == NULL)
     {
       strjoin (vl.type_instance, sizeof (vl.type_instance),
-          r->instances_buffer, r->instances_num, "-");
+          r_area->instances_buffer, r->instances_num, "-");
     }
     else
     {
       char tmp[DATA_MAX_NAME_LEN];
 
-      strjoin (tmp, sizeof (tmp), r->instances_buffer, r->instances_num, "-");
+      strjoin (tmp, sizeof (tmp), r_area->instances_buffer,
+          r->instances_num, "-");
       tmp[sizeof (tmp) - 1] = 0;
 
       snprintf (vl.type_instance, sizeof (vl.type_instance), "%s-%s",
@@ -414,74 +259,62 @@ static int udb_result_submit (udb_result_t *r, udb_query_t *q) /* {{{ */
   return (0);
 } /* }}} void udb_result_submit */
 
-static void udb_result_finish_result (udb_result_t *r) /* {{{ */
+static void udb_result_finish_result (const udb_result_t const *r, /* {{{ */
+    udb_result_preparation_area_t *prep_area)
 {
-  if (r == NULL)
+  if ((r == NULL) || (prep_area == NULL))
     return;
 
-  if (r->legacy_mode == 1)
-  {
-    udb_legacy_result_finish_result (r);
-    return;
-  }
-
-  assert (r->legacy_mode == 0);
-
-  r->ds = NULL;
-  sfree (r->instances_pos);
-  sfree (r->values_pos);
-  sfree (r->instances_buffer);
-  sfree (r->values_buffer);
+  prep_area->ds = NULL;
+  sfree (prep_area->instances_pos);
+  sfree (prep_area->values_pos);
+  sfree (prep_area->instances_buffer);
+  sfree (prep_area->values_buffer);
 } /* }}} void udb_result_finish_result */
 
 static int udb_result_handle_result (udb_result_t *r, /* {{{ */
-    udb_query_t *q, char **column_values)
+    udb_query_preparation_area_t *q_area,
+    udb_result_preparation_area_t *r_area,
+    const udb_query_t const *q, char **column_values)
 {
   size_t i;
 
-  if (r->legacy_mode == 1)
-    return (udb_legacy_result_handle_result (r, q, column_values));
-
-  assert (r->legacy_mode == 0);
+  assert (r && q_area && r_area);
 
   for (i = 0; i < r->instances_num; i++)
-    r->instances_buffer[i] = column_values[r->instances_pos[i]];
+    r_area->instances_buffer[i] = column_values[r_area->instances_pos[i]];
 
   for (i = 0; i < r->values_num; i++)
-    r->values_buffer[i] = column_values[r->values_pos[i]];
+    r_area->values_buffer[i] = column_values[r_area->values_pos[i]];
 
-  return udb_result_submit (r, q);
+  return udb_result_submit (r, r_area, q, q_area);
 } /* }}} int udb_result_handle_result */
 
-static int udb_result_prepare_result (udb_result_t *r, /* {{{ */
+static int udb_result_prepare_result (const udb_result_t const *r, /* {{{ */
+    udb_result_preparation_area_t *prep_area,
     char **column_names, size_t column_num)
 {
   size_t i;
 
-  if (r == NULL)
+  if ((r == NULL) || (prep_area == NULL))
     return (-EINVAL);
 
-  if (r->legacy_mode == 1)
-    return (udb_legacy_result_prepare_result (r, column_names, column_num));
-
-  assert (r->legacy_mode == 0);
-
 #define BAIL_OUT(status) \
-  r->ds = NULL; \
-  sfree (r->instances_pos); \
-  sfree (r->values_pos); \
-  sfree (r->instances_buffer); \
-  sfree (r->values_buffer); \
+  prep_area->ds = NULL; \
+  sfree (prep_area->instances_pos); \
+  sfree (prep_area->values_pos); \
+  sfree (prep_area->instances_buffer); \
+  sfree (prep_area->values_buffer); \
   return (status)
 
   /* Make sure previous preparations are cleaned up. */
-  udb_result_finish_result (r);
-  r->instances_pos = NULL;
-  r->values_pos = NULL;
+  udb_result_finish_result (r, prep_area);
+  prep_area->instances_pos = NULL;
+  prep_area->values_pos = NULL;
 
   /* Read `ds' and check number of values {{{ */
-  r->ds = plugin_get_ds (r->type);
-  if (r->ds == NULL)
+  prep_area->ds = plugin_get_ds (r->type);
+  if (prep_area->ds == NULL)
   {
     ERROR ("db query utils: udb_result_prepare_result: Type `%s' is not "
         "known by the daemon. See types.db(5) for details.",
@@ -489,12 +322,12 @@ static int udb_result_prepare_result (udb_result_t *r, /* {{{ */
     BAIL_OUT (-1);
   }
 
-  if (((size_t) r->ds->ds_num) != r->values_num)
+  if (((size_t) prep_area->ds->ds_num) != r->values_num)
   {
     ERROR ("db query utils: udb_result_prepare_result: The type `%s' "
         "requires exactly %i value%s, but the configuration specifies %zu.",
         r->type,
-        r->ds->ds_num, (r->ds->ds_num == 1) ? "" : "s",
+        prep_area->ds->ds_num, (prep_area->ds->ds_num == 1) ? "" : "s",
         r->values_num);
     BAIL_OUT (-1);
   }
@@ -504,30 +337,34 @@ static int udb_result_prepare_result (udb_result_t *r, /* {{{ */
    * r->values_buffer {{{ */
   if (r->instances_num > 0)
   {
-    r->instances_pos = (size_t *) calloc (r->instances_num, sizeof (size_t));
-    if (r->instances_pos == NULL)
+    prep_area->instances_pos
+      = (size_t *) calloc (r->instances_num, sizeof (size_t));
+    if (prep_area->instances_pos == NULL)
     {
       ERROR ("db query utils: udb_result_prepare_result: malloc failed.");
       BAIL_OUT (-ENOMEM);
     }
 
-    r->instances_buffer = (char **) calloc (r->instances_num, sizeof (char *));
-    if (r->instances_buffer == NULL)
+    prep_area->instances_buffer
+      = (char **) calloc (r->instances_num, sizeof (char *));
+    if (prep_area->instances_buffer == NULL)
     {
       ERROR ("db query utils: udb_result_prepare_result: malloc failed.");
       BAIL_OUT (-ENOMEM);
     }
   } /* if (r->instances_num > 0) */
 
-  r->values_pos = (size_t *) calloc (r->values_num, sizeof (size_t));
-  if (r->values_pos == NULL)
+  prep_area->values_pos
+    = (size_t *) calloc (r->values_num, sizeof (size_t));
+  if (prep_area->values_pos == NULL)
   {
     ERROR ("db query utils: udb_result_prepare_result: malloc failed.");
     BAIL_OUT (-ENOMEM);
   }
 
-  r->values_buffer = (char **) calloc (r->values_num, sizeof (char *));
-  if (r->values_buffer == NULL)
+  prep_area->values_buffer
+    = (char **) calloc (r->values_num, sizeof (char *));
+  if (prep_area->values_buffer == NULL)
   {
     ERROR ("db query utils: udb_result_prepare_result: malloc failed.");
     BAIL_OUT (-ENOMEM);
@@ -543,7 +380,7 @@ static int udb_result_prepare_result (udb_result_t *r, /* {{{ */
     {
       if (strcasecmp (r->instances[i], column_names[j]) == 0)
       {
-        r->instances_pos[i] = j;
+        prep_area->instances_pos[i] = j;
         break;
       }
     }
@@ -566,7 +403,7 @@ static int udb_result_prepare_result (udb_result_t *r, /* {{{ */
     {
       if (strcasecmp (r->values[i], column_names[j]) == 0)
       {
-        r->values_pos[i] = j;
+        prep_area->values_pos[i] = j;
         break;
       }
     }
@@ -723,7 +560,7 @@ void udb_query_free_one (udb_query_t *q) /* {{{ */
  */
 int udb_query_create (udb_query_t ***ret_query_list, /* {{{ */
     size_t *ret_query_list_len, oconfig_item_t *ci,
-    udb_query_create_callback_t cb, int legacy_mode)
+    udb_query_create_callback_t cb)
 {
   udb_query_t **query_list;
   size_t        query_list_len;
@@ -731,8 +568,6 @@ int udb_query_create (udb_query_t ***ret_query_list, /* {{{ */
   udb_query_t *q;
   int status;
   int i;
-
-  size_t legacy_position;
 
   if ((ret_query_list == NULL) || (ret_query_list_len == NULL))
     return (-EINVAL);
@@ -754,11 +589,8 @@ int udb_query_create (udb_query_t ***ret_query_list, /* {{{ */
     return (-1);
   }
   memset (q, 0, sizeof (*q));
-  q->legacy_mode = legacy_mode;
   q->min_version = 0;
   q->max_version = UINT_MAX;
-
-  legacy_position = 0;
 
   status = udb_config_set_string (&q->name, ci);
   if (status != 0)
@@ -780,42 +612,6 @@ int udb_query_create (udb_query_t ***ret_query_list, /* {{{ */
       status = udb_config_set_uint (&q->min_version, child);
     else if (strcasecmp ("MaxVersion", child->key) == 0)
       status = udb_config_set_uint (&q->max_version, child);
-
-    /* PostgreSQL compatibility code */
-    else if ((strcasecmp ("Query", child->key) == 0)
-        && (q->legacy_mode == 1))
-    {
-      WARNING ("db query utils: Query `%s': The `Query' option is "
-          "deprecated. Please use `Statement' instead.",
-          q->name);
-      status = udb_config_set_string (&q->statement, child);
-    }
-    else if ((strcasecmp ("Column", child->key) == 0)
-        && (q->legacy_mode == 1))
-    {
-      WARNING ("db query utils: Query `%s': The `Column' option is "
-          "deprecated. Please use the new syntax instead.",
-          q->name);
-      status = udb_legacy_result_create (q->name, &q->results, child,
-          legacy_position);
-      legacy_position++;
-    }
-    else if ((strcasecmp ("MinPGVersion", child->key) == 0)
-        && (q->legacy_mode == 1))
-    {
-      WARNING ("db query utils: Query `%s': The `MinPGVersion' option is "
-          "deprecated. Please use `MinVersion' instead.",
-          q->name);
-      status = udb_config_set_uint (&q->min_version, child);
-    }
-    else if ((strcasecmp ("MaxPGVersion", child->key) == 0)
-        && (q->legacy_mode == 1))
-    {
-      WARNING ("db query utils: Query `%s': The `MaxPGVersion' option is "
-          "deprecated. Please use `MaxVersion' instead.",
-          q->name);
-      status = udb_config_set_uint (&q->max_version, child);
-    }
 
     /* Call custom callbacks */
     else if (cb != NULL)
@@ -1029,33 +825,45 @@ int udb_query_check_version (udb_query_t *q, unsigned int version) /* {{{ */
   return (1);
 } /* }}} int udb_query_check_version */
 
-void udb_query_finish_result (udb_query_t *q) /* {{{ */
+void udb_query_finish_result (const udb_query_t const *q, /* {{{ */
+    udb_query_preparation_area_t *prep_area)
 {
+  udb_result_preparation_area_t *r_area;
   udb_result_t *r;
 
-  if (q == NULL)
+  if ((q == NULL) || (prep_area == NULL))
     return;
 
-  q->column_num = 0;
-  sfree (q->host);
-  sfree (q->plugin);
-  sfree (q->db_name);
+  prep_area->column_num = 0;
+  sfree (prep_area->host);
+  sfree (prep_area->plugin);
+  sfree (prep_area->db_name);
 
-  for (r = q->results; r != NULL; r = r->next)
-    udb_result_finish_result (r);
+  prep_area->interval = 0;
+
+  for (r = q->results, r_area = prep_area->result_prep_areas;
+      r != NULL; r = r->next, r_area = r_area->next)
+  {
+    /* this may happen during error conditions of the caller */
+    if (r_area == NULL)
+      break;
+    udb_result_finish_result (r, r_area);
+  }
 } /* }}} void udb_query_finish_result */
 
-int udb_query_handle_result (udb_query_t *q, char **column_values) /* {{{ */
+int udb_query_handle_result (const udb_query_t const *q, /* {{{ */
+    udb_query_preparation_area_t *prep_area, char **column_values)
 {
+  udb_result_preparation_area_t *r_area;
   udb_result_t *r;
   int success;
   int status;
 
-  if (q == NULL)
+  if ((q == NULL) || (prep_area == NULL))
     return (-EINVAL);
 
-  if ((q->column_num < 1) || (q->host == NULL) || (q->plugin == NULL)
-      || (q->db_name == NULL))
+  if ((prep_area->column_num < 1) || (prep_area->host == NULL)
+      || (prep_area->plugin == NULL) || (prep_area->db_name == NULL))
   {
     ERROR ("db query utils: Query `%s': Query is not prepared; "
         "can't handle result.", q->name);
@@ -1067,19 +875,21 @@ int udb_query_handle_result (udb_query_t *q, char **column_values) /* {{{ */
   {
     size_t i;
 
-    for (i = 0; i < q->column_num; i++)
+    for (i = 0; i < prep_area->column_num; i++)
     {
       DEBUG ("db query utils: udb_query_handle_result (%s, %s): "
           "column[%zu] = %s;",
-          q->db_name, q->name, i, column_values[i]);
+          prep_area->db_name, q->name, i, column_values[i]);
     }
   } while (0);
 #endif /* }}} */
 
   success = 0;
-  for (r = q->results; r != NULL; r = r->next)
+  for (r = q->results, r_area = prep_area->result_prep_areas;
+      r != NULL; r = r->next, r_area = r_area->next)
   {
-    status = udb_result_handle_result (r, q, column_values);
+    status = udb_result_handle_result (r, prep_area, r_area,
+        q, column_values);
     if (status == 0)
       success++;
   }
@@ -1087,34 +897,39 @@ int udb_query_handle_result (udb_query_t *q, char **column_values) /* {{{ */
   if (success == 0)
   {
     ERROR ("db query utils: udb_query_handle_result (%s, %s): "
-        "All results failed.", q->db_name, q->name);
+        "All results failed.", prep_area->db_name, q->name);
     return (-1);
   }
 
   return (0);
 } /* }}} int udb_query_handle_result */
 
-int udb_query_prepare_result (udb_query_t *q, /* {{{ */
+int udb_query_prepare_result (const udb_query_t const *q, /* {{{ */
+    udb_query_preparation_area_t *prep_area,
     const char *host, const char *plugin, const char *db_name,
-    char **column_names, size_t column_num)
+    char **column_names, size_t column_num, cdtime_t interval)
 {
+  udb_result_preparation_area_t *r_area;
   udb_result_t *r;
   int status;
 
-  if (q == NULL)
+  if ((q == NULL) || (prep_area == NULL))
     return (-EINVAL);
 
-  udb_query_finish_result (q);
+  udb_query_finish_result (q, prep_area);
 
-  q->column_num = column_num;
-  q->host = strdup (host);
-  q->plugin = strdup (plugin);
-  q->db_name = strdup (db_name);
+  prep_area->column_num = column_num;
+  prep_area->host = strdup (host);
+  prep_area->plugin = strdup (plugin);
+  prep_area->db_name = strdup (db_name);
 
-  if ((q->host == NULL) || (q->plugin == NULL) || (q->db_name == NULL))
+  prep_area->interval = interval;
+
+  if ((prep_area->host == NULL) || (prep_area->plugin == NULL)
+      || (prep_area->db_name == NULL))
   {
     ERROR ("db query utils: Query `%s': Prepare failed: Out of memory.", q->name);
-    udb_query_finish_result (q);
+    udb_query_finish_result (q, prep_area);
     return (-ENOMEM);
   }
 
@@ -1132,17 +947,94 @@ int udb_query_prepare_result (udb_query_t *q, /* {{{ */
   } while (0);
 #endif
 
-  for (r = q->results; r != NULL; r = r->next)
+  for (r = q->results, r_area = prep_area->result_prep_areas;
+      r != NULL; r = r->next, r_area = r_area->next)
   {
-    status = udb_result_prepare_result (r, column_names, column_num);
+    if (! r_area)
+    {
+      ERROR ("db query utils: Query `%s': Invalid number of result "
+          "preparation areas.", q->name);
+      udb_query_finish_result (q, prep_area);
+      return (-EINVAL);
+    }
+
+    status = udb_result_prepare_result (r, r_area, column_names, column_num);
     if (status != 0)
     {
-      udb_query_finish_result (q);
+      udb_query_finish_result (q, prep_area);
       return (status);
     }
   }
 
   return (0);
 } /* }}} int udb_query_prepare_result */
+
+udb_query_preparation_area_t *
+udb_query_allocate_preparation_area (udb_query_t *q) /* {{{ */
+{
+  udb_query_preparation_area_t   *q_area;
+  udb_result_preparation_area_t **next_r_area;
+  udb_result_t *r;
+
+  q_area = (udb_query_preparation_area_t *)malloc (sizeof (*q_area));
+  if (q_area == NULL)
+    return NULL;
+
+  memset (q_area, 0, sizeof (*q_area));
+
+  next_r_area = &q_area->result_prep_areas;
+  for (r = q->results; r != NULL; r = r->next)
+  {
+    udb_result_preparation_area_t *r_area;
+
+    r_area = (udb_result_preparation_area_t *)malloc (sizeof (*r_area));
+    if (r_area == NULL)
+    {
+      for (r_area = q_area->result_prep_areas;
+          r_area != NULL; r_area = r_area->next)
+      {
+        free (r_area);
+      }
+      free (q_area);
+      return NULL;
+    }
+
+    memset (r_area, 0, sizeof (*r_area));
+
+    *next_r_area = r_area;
+    next_r_area  = &r_area->next;
+  }
+
+  return (q_area);
+} /* }}} udb_query_preparation_area_t *udb_query_allocate_preparation_area */
+
+void
+udb_query_delete_preparation_area (udb_query_preparation_area_t *q_area) /* {{{ */
+{
+  udb_result_preparation_area_t *r_area;
+
+  if (q_area == NULL)
+    return;
+
+  r_area = q_area->result_prep_areas;
+  while (r_area != NULL)
+  {
+    udb_result_preparation_area_t *area = r_area;
+
+    r_area = r_area->next;
+
+    sfree (area->instances_pos);
+    sfree (area->values_pos);
+    sfree (area->instances_buffer);
+    sfree (area->values_buffer);
+    free (area);
+  }
+
+  sfree (q_area->host);
+  sfree (q_area->plugin);
+  sfree (q_area->db_name);
+
+  free (q_area);
+} /* }}} void udb_query_delete_preparation_area */
 
 /* vim: set sw=2 sts=2 et fdm=marker : */

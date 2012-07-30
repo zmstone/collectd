@@ -1,9 +1,689 @@
+2012-04-01, Version 5.1.0
+	* Build system, iptables plugin: The shipped version of libiptc has
+	  been removed.
+	* collectd-nagios: A list of value lists can now be queried using
+	  "-n LIST". Thanks to Sebastian Harl for his patches.
+	* bind plugin: The "ParseTime" option has been added. It allows to use
+	  the system time rather than the time reported by BIND.
+	* curl, memcachec, tail plugins: The "ExcludeRegexp" option has been
+	  added. Thanks to Peter Warasin for his initial patch.
+	* ethstat plugin: The new "ethstat" plugin reads performance statistics
+	  directly from ethernet cards. Thanks to Cyril Feraudet for his patch.
+	* GenericJMX plugin: Support for querying MBean "Operations" (in
+	  addition to "Attributes") has been added. Thanks to Pierre-Yves
+	  Ritschard for his patch.
+	* irq plugin: The selection / ignore code now uses the default
+	  ignorelist infrastructure, providing the standard feature set, e.g.
+	  regex matching.
+	* md plugin: The new "md" plugin reports the number of disks in various
+	  states in Linux software RAID devices. Thanks to Michael Hanselmann
+	  for his patch.
+	* modbus plugin: Support for signed integer register types has been
+	  added.
+	* nfs plugin: Support for Solaris has been added. Thanks to Cosmin
+	  Ioiart for his patch.
+	* numa plugin: The new "numa" plugin reports statistics of the
+	  Non-Uniform Memory Access (NUMA) subsystem of Linux.
+	* processes plugin: Various fixes for the FreeBSD implementation.
+	  Thanks to Phil Kulin for his patch.
+	* rrdcached plugin: Passing flushes to the caching daemon has been
+	  added.
+	* sensors plugin: The initialization code has been improved. Thanks to
+	  Henrique de Moraes Holschuh for his patch.
+	* swap plugin: The "ReportByDevice" option has been added.
+	* syslog plugin: Support for writing notifications has been added.
+	  Thanks to Fabien Wernli for his patch.
+	* tcpconns plugin: Support for AIX has been added. Thanks to Manuel
+	  Luis Sanmartín Rozada for his patch.
+	* threshold plugin: The "PersistOK" option has been added. Thanks to
+	  Aaron Brady for his patch.
+	* varnish plugin: Support for Varnish 3.0 has been added. Thanks to
+	  Jérôme Renard for his patches.
+	* write_mongodb plugin: The new "write_mongodb" plugin writes value
+	  lists to MongoDB, a shema-less database. Thanks to Akkarit Sangpetch
+	  and Chris Lundquist for their work.
+	* write_graphite plugin: The new "write_graphite" plugin writes value
+	  lists to Carbon, the storage layer of the Graphite time-series
+	  database. Thanks to Scott Sanders and Pierre-Yves Ritschard for their
+	  work.
+	* zfs_arc plugin: Several new statistics have been added. Thanks to
+	  Aurelien Rougemont for his patches.
+	* scale target: Support for scaling specific data sources only has been
+	  added. Thanks to Gerrie Roos for his patch.
+
+
+2012-04-01, Version 5.0.4
+	* Build system: Fix the use of a libltdl macro. Thanks to Clemens Lang
+	  for fixing this. Adresses some issues with building the iptables
+	  plugin under Gentoo.
+	* libcollectdclient: A memory leak in the lcc_getval() function has
+	  been fixed. Thanks to Jason Schmidlapp for finding and fixing this
+	  issue.
+	* bind plugin: The use of 'QType" types has been fixed.
+	* df plugin: Fixed compiler issue under Mac OS X 10.7.
+	* conntrack plugin: Support zero as legitimate value. Thanks to Louis
+	  Opter for his patch.
+	* memcached plugin: Increased the size of a static buffer, which was
+	  truncating status messages form memcached. Thanks to Timon for the
+	  patch.
+	* network plugin: Forwarding of notifications has been disabled. This
+	  was a contition not checked for before, which may retult in an
+	  endless loop.
+	* processes plugin: Support for process names with spaces has been
+	  added to the Linux implementation. Thanks to Darrell Bishop for his
+	  patch.
+	* perl plugin: A race condition in several callbacks, including log and
+	  write callbacks, has been fixed. Thanks to "Rrpv" for reporting this
+	  bug.
+	* snmp plugin: A bug when casting unsigned integers to gauge values has
+	  been fixed: Unsigned integers would be cast to a signed integer and
+	  then to a gauge, possibly resulting in a negative value.
+	* tcpconns plugin: Compilation with newer versions of the FreeBSD
+	  runtime has been fixed.
+
+2012-02-19, Version 5.0.3
+	* Build system: Fix problems when building the ipvs and iptables
+	  plugins. Thanks to Sebastian Harl for his patch. A bashism in the
+	  version-gen.sh script has been fixed. Thanks to Jo-Philipp Wich for
+	  his patch.
+	* csv and rrdtool plugins: Print a more helpful error message when the
+	  DataDir is a symlink pointing to a non-existing location. Thanks to
+	  Jonathan Nieder for his patch.
+	* exec plugin: Fix a problem when using select(2) to read from file
+	  handles. Thanks to Gerrie Roos for his patch.
+	* network plugin: An incorrect error message in the handling of the
+	  "Interface" configuration option has been fixed. Thanks to Gerrie
+	  Roos for his patch.
+	* oracle plugin: A potential endless loop in the error handling has
+	  been fixed.
+	* python plugin: A crash bug in the configuration handling has been
+	  fixed. Thanks to Sven Trenkel for his patch.
+	* interfaces plugin: The change which was supposed to ignore "bogus"
+	  interfaces has been reverted, since it ignored legit interfaces, such
+	  as bonding pseudo-devices as well.
+
+2012-01-21, Version 5.0.2
+	* curl_xml plugin: Fix handling of file:// and other URLs (which don't
+	  follow HTTP status codes). Thanks to Fabien Wernli for his patch!
+	* df plugin: Fix handling of negative "available" counts. This can
+	  occur with some file systems, for example UFS. Thanks to Toni Ylenius
+	  for his patch.
+	* interface plugin: "mac" interfaces are now ignored on Solaris. These
+	  pseudo-interfaces occur multiple times, causing warnings. Also switch
+	  to 64-bit counters on Solaris, improving overflow behavior for
+	  high-speed interfaces. Thanks to Eddy Geez and Fabien Wernli for
+	  their patches.
+	* memory plugin: Account kernel and unused memory under Solaris. Thanks
+	  to Fabien Wernli for his patch.
+	* network plugin: A bug in the interaction between the Network plugin
+	  and filter chains has been fixed: When a filter modified a field such
+	  as the hostname, subsequent values in the same network packets could
+	  have ended up using the modified name rather than the original name.
+	  Thanks to Sebastian Harl for identifying the problem.
+	* oracle plugin: A memory leak has been fixed in the parameter handling.
+	* python plugin: A memory leak has been fixed. Thanks to Sven Trenkel
+	  for fixing this bug!
+
+2011-10-07, Version 5.0.1
+	* collectd: A mutex leak has been fixed in the meta data code. Thanks
+	  to Rafal Lesniak for his patch.
+	* collectd: Compatibility fixes for GCC 4.6 have been applied. Thanks
+	  to Peter Green for his patch.
+	* csv plugin: The line buffer size has been increased. Thanks to Colin
+	  McCabe for the patch.
+	* curl_json plugin: Don't use the "parent" node to build the type
+	  instance, if it is empty. Compatibility with libyajl 2 has been
+	  added. Thanks to "spupykin" of the Arch Linux project for the initial
+	  code. Formatting of time has been fixed in the JSON module.
+	* exec plugin: Fix the timestamp value passed to notification scripts.
+	  Thanks to Alexander Kovalenko for fixing this.
+	* iptables plugin: Fix linking with some versions of libiptc.
+	* irq plugin: Fix support for interrupts under Linux. The old code
+	  assumed that interrupts have a numeric value -- this is no longer
+	  true for Linux. Thanks to Bostjan Skufca for implementing this.
+	* notify_desktop plugin: Compatibility with libnotify 0.7 has been
+	  added. Thanks to Samuli Suominen for his patch.
+	* processes plugin: Fix handling of regular expressions containing
+	  spaces. Thanks for Sebastian Harl for fixing this.
+	* rrdtool, rrdcached plugins: Improve precision of the XFF parameter.
+	  Previously, values like 0.999 would have been rounded to 1.0. Thanks
+	  to Francois-Xavier Bourlet for fixing this.
+	* varnish plugin: Fix data type handling of some metrics. Some values
+	  were submitted as gauge even though they were derives.
+	* Various plugin: Set a multi-threading flag in libcurl. Thanks to Mike
+	  Flisher for the fix.
+
+2011-03-28, Version 5.0.0
+	* collectd: The "FQDNLookup" option is now enabled by default.
+	* collectd: The internal representation of time has been changed to
+	  allow a higher accuracy than one second.
+	* collectdcmd: This new command line utility can send various commands
+	  to collectd using the UnixSock plugin. Thanks to Håkon Dugstad
+	  Johnsen and Sebastian Harl for their code.
+	* collectd-nagios: The "-m" option has been implemented (treat NaNs as
+	  critical).
+	* collectd-tg: Traffic generator creating bogus network traffic
+	  compatible to the Network plugin. This utility can be used to
+	  stress-test new write plugins and collectd in general.
+	* libcollectdclient: Creating and sending network packets has been
+	  added to the collectd client library.
+	* All data sets: The data source name of all data sets with exactly
+	  one data source has been changed to "value".
+	* All plugins: All "counter" data sources have been converted to
+	  "derive" data sources. All plugins now use "derive" by default, but
+	  plugins such as the network plugin can still handle "counter", of
+	  course. The minimum value of all derive data sources is zero, the
+	  maximum value is unspecified.
+	* amqp plugin: The new AMQP plugin can send data to and receive data
+	  from an AMQP broker. Thanks to Sebastien Pahl for his code.
+	* apache plugin: Backwards compatibility code has been removed.
+	  Support for the IBM HTTP Server has been added. Thanks to Manuel
+	  Luis Sanmartín Rozada for his patch.
+	* contextswitch plugin: Support for sysctlbyname(3) has been added.
+	  Thanks to Kimo Rosenbaum for his patch.
+	* df plugin: The default behavior has been changed to be equivalent to
+	  the "ReportReserved" behavior of v4.
+	* dns plugin: Improved RFC 1035 name parsing has been imported from
+	  "dnstop".
+	* exec plugin: Backwards compatibility code has been removed.
+	* GenericJMX plugin: The "InstancePrefix" option has been added to
+	  "Connection" blocks.
+	* hddtemp plugin: The "TranslateDevicename" config option has been
+	  removed.
+	* interface plugin: Use the "plugin instance" to store the interface
+	  value.
+	* libvirt plugin: The "InterfaceFormat" option has been added. Thanks
+	  to Ruben Kerkhof for his patch.
+	* lpar plugin: New plugins for "logical partitions", a virtualization
+	  technique of POWER CPUs. Thanks to Aurélien Reynaud for his code and
+	  patience.
+	* modbus plugin: Support for libmodbus 2.9.2 has been added and the
+	  license has been changed to LGPLv2.1.
+	* mysql plugin: Backwards compatibility code has been removed. The
+	  data sets used have been improved.
+	* network plugin: The default buffer size has been increased to
+	  1452 bytes.
+	* perl plugin: Backwards compatibility code has been removed.
+	* postgresql plugin: Backwards compatibility code has been removed.
+	* redis plugin: Plugin for collecting statistics from Redis, a key-
+	  value store, has been added. Thanks to Andres J. Diaz for his code.
+	* swap plugin: Implement collection of physical and virtual memory
+	  statistics under Solaris. The new default is collecting physical
+	  memory. Thanks to Aurélien Reynaud for his patches.
+	* threshold plugin: The threshold configuration has been moved into
+	  this separate plugin.
+	* unixsock plugin: The "DeleteSocket" option has been added.
+	* varnish plugin: The new Varnish plugin reads statistics from
+	  Varnish, a web accelerator. Thanks to Jérôme Renard and Marc
+	  Fournier for their contributions.
+	* write_redis: New plugin for writing data to Redis, a key-value
+	  store.
+	* zfs_arc plugin: The data sets have been replaced by more elegant
+	  alternatives.
+	* v5upgrade target: Target for converting v4 data sets to the v5
+	  schema.
+
+2012-04-01, Version 4.10.7
+	* Build system: Fix the use of a libltdl macro. Thanks to Clemens Lang
+	  for fixing this. Adresses some issues with building the iptables
+	  plugin under Gentoo.
+	* libcollectdclient: A memory leak in the lcc_getval() function has
+	  been fixed. Thanks to Jason Schmidlapp for finding and fixing this
+	  issue.
+	* bind plugin: The use of 'QType" types has been fixed.
+	* df plugin: Fixed compiler issue under Mac OS X 10.7.
+	* conntrack plugin: Support zero as legitimate value. Thanks to Louis
+	  Opter for his patch.
+	* memcached plugin: Increased the size of a static buffer, which was
+	  truncating status messages form memcached. Thanks to Timon for the
+	  patch.
+	* network plugin: Forwarding of notifications has been disabled. This
+	  was a contition not checked for before, which may retult in an
+	  endless loop.
+	* processes plugin: Support for process names with spaces has been
+	  added to the Linux implementation. Thanks to Darrell Bishop for his
+	  patch.
+	* perl plugin: A race condition in several callbacks, including log and
+	  write callbacks, has been fixed. Thanks to "Rrpv" for reporting this
+	  bug.
+	* snmp plugin: A bug when casting unsigned integers to gauge values has
+	  been fixed: Unsigned integers would be cast to a signed integer and
+	  then to a gauge, possibly resulting in a negative value.
+	* tcpconns plugin: Compilation with newer versions of the FreeBSD
+	  runtime has been fixed.
+
+2012-02-19, Version 4.10.6
+	* Build system: Fix problems when building the ipvs and iptables
+	  plugins. Thanks to Sebastian Harl for his patch. A bashism in the
+	  version-gen.sh script has been fixed. Thanks to Jo-Philipp Wich for
+	  his patch.
+	* csv and rrdtool plugins: Print a more helpful error message when the
+	  DataDir is a symlink pointing to a non-existing location. Thanks to
+	  Jonathan Nieder for his patch.
+	* exec plugin: Fix a problem when using select(2) to read from file
+	  handles. Thanks to Gerrie Roos for his patch.
+	* network plugin: An incorrect error message in the handling of the
+	  "Interface" configuration option has been fixed. Thanks to Gerrie
+	  Roos for his patch.
+	* oracle plugin: A potential endless loop in the error handling has
+	  been fixed.
+	* python plugin: A crash bug in the configuration handling has been
+	  fixed. Thanks to Sven Trenkel for his patch.
+	* interfaces plugin: The change which was supposed to ignore "bogus"
+	  interfaces has been reverted, since it ignored legit interfaces, such
+	  as bonding pseudo-devices as well.
+
+2012-01-21, Version 4.10.5
+	* curl_xml plugin: Fix handling of file:// and other URLs (which don't
+	  follow HTTP status codes). Thanks to Fabien Wernli for his patch!
+	* df plugin: Fix handling of negative "available" counts. This can
+	  occur with some file systems, for example UFS. Thanks to Toni Ylenius
+	  for his patch.
+	* interface plugin: "mac" interfaces are now ignored on Solaris. These
+	  pseudo-interfaces occur multiple times, causing warnings. Also switch
+	  to 64-bit counters on Solaris, improving overflow behavior for
+	  high-speed interfaces. Thanks to Eddy Geez and Fabien Wernli for
+	  their patches.
+	* memory plugin: Account kernel and unused memory under Solaris. Thanks
+	  to Fabien Wernli for his patch.
+	* network plugin: A bug in the interaction between the Network plugin
+	  and filter chains has been fixed: When a filter modified a field such
+	  as the hostname, subsequent values in the same network packets could
+	  have ended up using the modified name rather than the original name.
+	  Thanks to Sebastian Harl for identifying the problem.
+	* oracle plugin: A memory leak has been fixed in the parameter handling.
+	* python plugin: A memory leak has been fixed. Thanks to Sven Trenkel
+	  for fixing this bug!
+
+2011-10-14, Version 4.10.4
+	* collectd: A mutex leak has been fixed in the meta data code. Thanks
+	  to Rafal Lesniak for his patch.
+	* collectd: Compatibility fixes for GCC 4.6 have been applied. Thanks
+	  to Peter Green for his patch.
+	* csv plugin: The line buffer size has been increased. Thanks to Colin
+	  McCabe for the patch.
+	* curl_json plugin: Don't use the "parent" node to build the type
+	  instance, if it is empty. Compatibility with libyajl 2 has been
+	  added. Thanks to "spupykin" of the Arch Linux project for the initial
+	  code.
+	* iptables plugin: Fix linking with some versions of libiptc.
+	* irq plugin: Fix support for interrupts under Linux. The old code
+	  assumed that interrupts have a numeric value -- this is no longer
+	  true for Linux. Thanks to Bostjan Skufca for implementing this.
+	* notify_desktop plugin: Compatibility with libnotify 0.7 has been
+	  added. Thanks to Samuli Suominen for his patch.
+	* processes plugin: Fix handling of regular expressions containing
+	  spaces. Thanks for Sebastian Harl for fixing this.
+	* rrdtool, rrdcached plugins: Improve precision of the XFF parameter.
+	  Previously, values like 0.999 would have been rounded to 1.0. Thanks
+	  to Francois-Xavier Bourlet for fixing this.
+	* Various plugin: Set a multi-threading flag in libcurl. Thanks to Mike
+	  Flisher for the fix.
+
+2011-03-26, Version 4.10.3
+	* Documentation: Several updates and additions. Thanks to Sebastian Harl.
+	* collectd: Build issues (compiler warnings) have been fixed. Thanks to
+	  Bruno Prémont.
+	* collectd: Threshold subsection: Handling of NAN values in the
+	  percentage calculation has been fixed.
+	* collectd, java plugin, ntpd plugin: Several diagnostic messages have
+	  been improved.
+	* curl_json plugin: Handling of arrays has been fixed.
+	* libvirt plugin: A bug in reading the virtual CPU statistics has been
+	  fixed. Thanks to “JLPC” for reporting this problem.
+	* modbus plugin: Compatibility with libmodbus 2.0.3 has been restored.
+	* processes plugin: Potentially erroneous behavior has been fixed in an
+	  error handling case.
+	* python plugin: Fix dispatching of values from Python scripts to
+	  collectd. Thanks to Gregory Szorc for finding and fixing this
+	  problem.
+
+2010-11-27, Version 4.10.2
+	* Documentation: Various documentation fixes.
+	* collectd: If including one configuration file fails, continue with
+	  the rest of the configuration if possible.
+	* collectd: Fix a bug in the read function scheduling. In rare cases
+	  read functions may not have been called as often as requested.
+	* collectd: Concurrency issues with errno(3) under AIX have been
+	  fixed: A thread-safe version of errno has to be requested under AIX.
+	  Thanks to Aurélien Reynaud for his patch.
+	* collectd: A left-over hard-coded 2 has been replaced by the
+	  configurable timeout value.
+	* curl, memcachec, tail plugins: Fix handling of "DERIVE" data
+	  sources. Matching the end of a string has been improved; thanks to
+	  Sebastian Harl for the patch.
+	* curl_json plugin: Fix a problem when parsing 64bit integers. Reading
+	  JSON data from non-HTTP sources has been fixed.
+	* netapp plugin: Pass the interval setting to the dispatch function.
+	  Restore compatibility to NetApp Release 7.3. Thanks to Sven Trenkel
+	  for the patch.
+	* network plugin: Be less verbose about unchecked signatures, in order
+	  to prevent spamming the logs.
+	* notify_email plugin: Concurrency problems have been fixed.
+	* python plugin: Set "sys.argv", since many scripts don't expect that
+	  it may not be set. Thanks to Sven Trenkel for the patch.
+	* rrdtool, rrdcached plugin: Fix a too strict assertion when creating
+	  RRD files.
+	* swap plugin: A bug which lead to incorrect I/O values has been
+	  fixed.
+	* value match: A minor memory leak has been fixed. Thanks to Sven
+	  Trenkel for the patch.
+
+2010-07-09, Version 4.10.1
+	* Build system: Checking for "strtok_r" under Solaris has been fixed.
+	* Portability: Fixes for Solaris 8 have been applied. Thanks to
+	  Alexander Wuerstlein for his patch.
+	* collectd: The shutdown speed when terminating the read threads has
+	  been improved.
+	* libcollectdclient: A format error in the PUTVAL command has been
+	  removed. Thanks to Johan Van den Brande for fixing this.
+	* df plugin: An error message shown when "cu_mount_getlist" fails has
+	  been added.
+	* processes plugin: Missing initialization code for IO members of a
+	  struct has been added. Thanks to Aurélien Reynaud for fixing this.
+	* python plugin: Memory leaks in the write and notification callbacks
+	  have been fixed. A possible crash when the plugin was loaded but not
+	  configured has been fixed. Thanks to Sven Trenkel for his patches.
+	* snmp plugin: Verbosity with regard to unknown ASN types has been
+	  increased. A build problem on PowerPC and ARM processors has been
+	  fixed by Aurélien Reynaud; thanks!
+	* powerdns plugin: Compatibility changes for PowerDNS 2.9.22 and above
+	  have been applied. Thanks to Luke Heberling for his changes.
+
+2010-05-01, Version 4.10.0
+	* collectd: JSON output now includes the "dstypes" and "dsnames"
+	  fields. This makes it easier for external applications to interpret
+	  the data. Thanks to Chris Buben for his work.
+	* collectd: The new "Timeout" option can be used to specify a
+	  "timeout" for missing values. This is used in the threshold checking
+	  code to detect missing values. Thanks to Andrés J. Díaz for the
+	  patch.
+	* apache plugin: Support for "IdleWorkers" (Apache 1.*: "IdleServers")
+	  has been added.
+	* curl plugin: The new "ExcludeRegex" allows to easily exclude certain
+	  lines from the match.
+	* curl_xml plugin: This new plugin allows to read XML files using cURL
+	  and extract metrics included in the files. Thanks to Amit Gupta for
+	  his work.
+	* filecount plugin: The new "IncludeHidden" option allows to include
+	  "hidden" files and directories in the statistics. Thanks to Vaclav
+	  Malek for the patch.
+	* logfile plugin: The new "PrintSeverity" option allows to include the
+	  severity of a message in the output. Thanks to Clément Stenac for
+	  his patch.
+	* memcachec plugin: The new "ExcludeRegex" allows to easily exclude
+	  certain lines from the match.
+	* modbus plugin: This new plugin allows to read registers from
+	  Modbus-TCP enabled devices.
+	* network plugin: The new "Interface" option allows to set the
+	  interface to be used for multicast and, if supported, unicast
+	  traffic. Thanks to Max Henkel for his work.
+	* openvpn plugin: The "CollectUserCount" and "CollectIndividualUsers"
+	  options allow more detailed control over how to report sessions of
+	  multiple users. Thanks to Fabian Schuh for his work.
+	* pinba plugin: This new plugin receives timing information from the
+	  Pinba PHP extension, which can be used for profiling PHP code and
+	  webserver performance. Thanks to Phoenix Kayo for his work.
+	* ping plugin: The new "MaxMissed" allows to re-resolve a hosts
+	  address when it doesn't reply to a number of ping requests. Thanks
+	  to Stefan Völkel for the patch.
+	* postgresql plugin: The "Interval" config option has been added. The
+	  plugin has been relicensed under the 2-clause BSD license. Thanks to
+	  Sebastian Harl for his work.
+	* processes plugin: Support for "code" and "data" virtual memory sizes
+	  has been added. Thanks to Clément Stenac for his patch.
+	* python plugin: Support for Python 3 has been implemented. Thanks to
+	  Sven Trenkel for his work.
+	* routeros plugin: Support for collecting CPU load, memory usage, used
+	  and free disk space, sectors written and number of bad blocks from
+	  MikroTik devices has been added.
+	* swap plugin: Support for Linux < 2.6 has been added. Thanks to Lorin
+	  Scraba for his patch.
+	* tail plugin: The new "ExcludeRegex" allows to easily exclude certain
+	  lines from the match. Thanks to Peter Warasin for his patch.
+	* write_http plugin: The "StoreRates" option has been added. Thanks to
+	  Paul Sadauskas for his patch.
+	* regex match: The "Invert" option has been added. Thanks to Julien
+	  Ammous for his patch.
+
+2011-03-26, Version 4.9.5
+	* Documentation: Several updates and additions. Thanks to Sebastian Harl.
+	* collectd: Build issues (compiler warnings) have been fixed. Thanks to
+	  Bruno Prémont.
+	* collectd: Threshold subsection: Handling of NAN values in the
+	  percentage calculation has been fixed.
+	* collectd, java plugin, ntpd plugin: Several diagnostic messages have
+	  been improved.
+	* libvirt plugin: A bug in reading the virtual CPU statistics has been
+	  fixed. Thanks to “JLPC” for reporting this problem.
+	* processes plugin: Potentially erroneous behavior has been fixed in an
+	  error handling case.
+	* python plugin: Fix dispatching of values from Python scripts to
+	  collectd. Thanks to Gregory Szorc for finding and fixing this
+	  problem.
+
+2010-11-27, Version 4.9.4
+	* Documentation: Various documentation fixes.
+	* collectd: If including one configuration file fails, continue with
+	  the rest of the configuration if possible.
+	* collectd: Fix a bug in the read function scheduling. In rare cases
+	  read functions may not have been called as often as requested.
+	* collectd: Concurrency issues with errno(3) under AIX have been
+	  fixed: A thread-safe version of errno has to be requested under AIX.
+	  Thanks to Aurélien Reynaud for his patch.
+	* curl, memcachec, tail plugins: Fix handling of "DERIVE" data
+	  sources. Matching the end of a string has been improved; thanks to
+	  Sebastian Harl for the patch.
+	* curl_json plugin: Fix a problem when parsing 64bit integers. Reading
+	  JSON data from non-HTTP sources has been fixed.
+	* netapp plugin: Pass the interval setting to the dispatch function.
+	  Restore compatibility to NetApp Release 7.3. Thanks to Sven Trenkel
+	  for the patch.
+	* network plugin: Be less verbose about unchecked signatures, in order
+	  to prevent spamming the logs.
+	* notify_email plugin: Concurrency problems have been fixed.
+	* python plugin: Set "sys.argv", since many scripts don't expect that
+	  it may not be set. Thanks to Sven Trenkel for the patch.
+	* rrdtool, rrdcached plugin: Fix a too strict assertion when creating
+	  RRD files.
+	* value match: A minor memory leak has been fixed. Thanks to Sven
+	  Trenkel for the patch.
+
+2010-07-09, Version 4.9.3
+	* Build system: Checking for "strtok_r" under Solaris has been fixed.
+	* Portability: Fixes for Solaris 8 have been applied. Thanks to
+	  Aurélien Reynaud and Alexander Wuerstlein for their patches.
+	* collectd: The shutdown speed when terminating the read threads has
+	  been improved.
+	* collectd-nagios: The format of the performance data has been fixed.
+	* libcollectdclient: A format error in the PUTVAL command has been
+	  removed. Thanks to Johan Van den Brande for fixing this.
+	* df plugin: An error message shown when "cu_mount_getlist" fails has
+	  been added.
+	* processes plugin: Missing initialization code for IO members of a
+	  struct has been added. Thanks to Aurélien Reynaud for fixing this.
+	* python plugin: Memory leaks in the write and notification callbacks
+	  have been fixed. A possible crash when the plugin was loaded but not
+	  configured has been fixed. Thanks to Sven Trenkel for his patches.
+	* rrdcached plugin: A build issue has been resolved. Thanks to
+	  Thorsten von Eicken for the patch.
+	* snmp plugin: Verbosity with regard to unknown ASN types has been
+	  increased. A build problem on PowerPC and ARM processors has been
+	  fixed by Aurélien Reynaud; thanks!
+	* powerdns plugin: Compatibility changes for PowerDNS 2.9.22 and above
+	  have been applied. Thanks to Luke Heberling for his changes.
+
+2010-04-22, Version 4.9.2
+	* Build system, various plugins: Fixes for AIX compatibility have been
+	  added. Thanks to Manuel Sanmartin for his patches.
+	* Build system: Checking for "nanosleep" on old Solaris machines has
+	  been fixed. Thanks to Vincent McIntyre and Sebastian Harl for
+	  figuring out a way to make this work.
+	* collectd: Append a newline to messages written to STDERR.
+	* collectd: Serialization of NANs in JSON format has been fixed.
+	  Thanks to Chris Buben for pointing out the resulting syntax error.
+	* collectd: Checks whether a "sleep" returned early have been added;
+	  the cases are now handled correctly. Thanks to Michael Stapelberg
+	  for the patch.
+	* collectd: Continue reading files in a directory when parsing one
+	  file fails.
+	* apache plugin: Collection of the number of active connections has
+	  been fixed for Apache 2.*.
+	* contextswitch plugin: Handle large counter/derive values correctly.
+	  Thanks to Martin Merkel for reporting the bug.
+	* exec plugin: Error messages have been improved. The "running" flag
+	  is now cleared correctly when forking a child fails.
+	* iptables plugin: Fix a violation of aliasing rules. This resolves a
+	  warning / error with new GCC versions. Thanks to Jan Engelhardt for
+	  the work-around.
+	* java plugin: The Java API files are now packaged into a .jar file.
+	  Thanks to Amit Gupta for his patch.
+	* network plugin: Fix a segmentation fault when receiving packets with
+	  an unknown data source type.
+	* network plugin: A memory leak when receiving encrypted network
+	  packets has been fixed.
+	* openvpn plugin: Fix naming schema when reading "MULTI1" type status
+	  files.
+	* oracle plugin: Fix checking for lost connections and reconnect in
+	  this case. Thanks to Sven Trenkel for pointing out the problem.
+	* unixsock plugin: A memory leak in the "LISTVAL" command has been
+	  fixed. Thanks to Peter Warasin for pointing it out.
+	* write_http plugin: Use the "any" authentication schema. This used to
+	  be "digest". Thanks to Paul Sadauskas for the patch.
+
+2010-01-14, Version 4.9.1
+	* Documentation: Some manpage fixes.
+	* Default config: Added sample configuration for missing plugins.
+	* apache plugin: Fix a segmentation fault in the config handling of
+	  VerifyPeer / VerifyHost. Thanks to "plazmus" for his or her patch.
+	* processes plugin: Fix handling of derive data sources.
+	* rrdtool plugin: Fix a bug with random write timeouts. Due to an
+	  incorrect initialization some files may be suspended basically
+	  indefinitely. After flushing the files they were written regularly
+	  again.
+	* routeros plugin: Use the node name for the "host" field.
+	* Monitorus.pm: Put the plugin into the "Collectd::Plugins" namespace.
+	* Perl bindings: Fix a warning that was printed when building
+	  debugging output.
+
+2009-12-21, Version 4.9.0
+	* contextswitch plugin: The new ContextSwitch plugin gathers the
+	  number of context switches done by the CPU. Thanks to Patrik
+	  Weiskircher for the patch.
+	* cpu plugin: Support for SMP (multiple processors) under FreeBSD has
+	  been added. Thanks to Doug MacEachern for the patch.
+	* curl plugin: The “MeasureResponseTime” option has been added. Thanks
+	  to Aman Gupta for the patch.
+	* df plugin: Collecting the inode count and reserved space has been
+	  added. Thanks to Patrik Weiskircher for the patch.
+	* exec plugin: The environment variables “COLLECTD_INTERVAL” and
+	  “COLLECTD_HOSTNAME” are now set before executing the application.
+	* Monitorus plugin: This Perl-based plugin to query statistics from
+	  mon.itor.us has been added. Thanks to Jeff Green for the patch.
+	* netapp plugin: New plugin to collect statistics from NetApp filers.
+	  Thanks to Sven Trenkel of the noris network AG for the patch.
+	* network plugin: Statistics collection about the plugin itself has
+	  been implemented.
+	* openvpn plugin: Add support for more versions of the “status file”.
+	  Thanks to Marco Chiappero for the patch.
+	* OpenVZ plugin: This Perl-based plugin to gather OpenVZ statistics
+	  has been added. Thanks to Jonathan Kolb for the patch.
+	* ping plugin: The config options "SourceAddress" and "Device"
+	  have been added. Thanks to Sebastian Harl for the patch.
+	* processes plugin: Collection of IO-metrics has been added. Thanks to
+	  Andrés J. Díaz for the patch.
+	* python plugin: The new Python plugin integrates a Python interpreter
+	  into collectd and allows to execute plugins written in the scripting
+	  language. Thanks to Sven Trenkel for his work.
+	* routeros plugin: The new RouterOS plugin queries interface and
+	  wireless registration statistics from RouterOS.
+	* Various plugins: AIX support has been added to the cpu, disk,
+	  interface, load, memory, processes, and swap plugins. Thanks to
+	  Manuel Sanmartin for his patches.
+	* hashed match: This match for simple load balancing and redundant
+	  storage has been added.
+	* scale target: This target to scale (multiply) values by an arbitrary
+	  value has been added.
+
+2010-04-22, Version 4.8.5
+	* collectd: Append a newline to messages written to STDERR.
+	* network plugin: Fix a segmentation fault when receiving packets with
+	  an unknown data source type.
+
+2010-04-07, Version 4.8.4
+	* Build system, various plugins: Fixes for AIX compatibility have been
+	  added. Thanks to Manuel Sanmartin for his patches.
+	* Build system: Checking for "nanosleep" on old Solaris machines has
+	  been fixed. Thanks to Vincent McIntyre and Sebastian Harl for
+	  figuring out a way to make this work.
+	* collectd: Serialization of NANs in JSON format has been fixed.
+	  Thanks to Chris Buben for pointing out the resulting syntax error.
+	* collectd: Checks whether a "sleep" returned early have been added;
+	  the cases are now handled correctly. Thanks to Michael Stapelberg
+	  for the patch.
+	* collectd: Continue reading files in a directory when parsing one
+	  file fails.
+	* apache plugin: Collection of the number of active connections has
+	  been fixed for Apache 2.*.
+	* exec plugin: Error messages have been improved. The "running" flag
+	  is now cleared correctly when forking a child fails.
+	* iptables plugin: Fix a violation of aliasing rules. This resolves a
+	  warning / error with new GCC versions. Thanks to Jan Engelhardt for
+	  the work-around.
+	* java plugin: The Java API files are now packaged into a .jar file.
+	  Thanks to Amit Gupta for his patch.
+	* network plugin: A memory leak when receiving encrypted network
+	  packets has been fixed.
+	* oracle plugin: Fix checking for lost connections and reconnect in
+	  this case. Thanks to Sven Trenkel for pointing out the problem.
+	* unixsock plugin: A memory leak in the "LISTVAL" command has been
+	  fixed. Thanks to Peter Warasin for pointing it out.
+	* write_http plugin: Use the "any" authentication schema. This used to
+	  be "digest". Thanks to Paul Sadauskas for the patch.
+
+2010-01-14, Version 4.8.3
+	* Documentation: Some manpage fixes.
+	* rrdtool plugin: Fix a bug with random write timeouts. Due to an
+	  incorrect initialization some files may be suspended basically
+	  indefinitely. After flushing the files they were written regularly
+	  again.
+
+2009-12-18, Version 4.8.2
+	* Build system, java plugin: Don't use “find -L” to search for Java
+	  headers, because it's a GNU extension.
+	* Build system: Support for parallel builds has been improved. Thanks
+	  Sebastian Harl and Stefan Völkel for looking into this.
+	* collectd: Print error messages to STDERR if no log plugin has been
+	  loaded.
+	* genericjmx plugin: Close and re-open the connection upon I/O-errors.
+	* gmond plugin: Fix typos which caused syntax errors.
+	* memory plugin: Handling of >4 Gbyte of memory has been fixed.
+	* network plugin: The license has been changed to LGPL 2.1.
+	* oracle plugin: Reconnect to the database if the connection dies.
+	* rrdcached plugin: Work-around for a bug in RRDtool 1.4rc2 has been
+	  added.
+	* snmp plugin: Handling of negative values has been fixed. Strings
+	  containing control characters are now interpreted as hex-strings.
+	* unixsock plugin: A memory leak in the LISTVAL command has been
+	  fixed. Thanks to Ben Knight for his patch.
+
+2009-10-04, Version 4.8.1
+	* Build system: Issues when building the iptables plugin have been
+	  fixed.
+	* exec plugin: Clear the signal block mask before calling exec(2).
+	* perl plugin: Declare the “environ” variable. This solves build
+	  issues on some platforms.
+	* processes plugin: Remove unnecessary call of realloc(3). Thanks to
+	  Andrés J. Díaz for the patch.
+	* unixsock plugin: Fix a (well hidden) race condition related to file
+	  descriptor handling.
+
 2009-09-13, Version 4.8.0
 	* collectd: Two new data source types, “DERIVE” and “ABSOLUTE”, have
 	  been added. “DERIVE” can be used for counters that are reset
 	  occasionally. Thanks to Mariusz Gronczewski for implementing this.
 	* thresholds: The advanced threshold options “Percentage”, “Hits”, and
-	  “Hysteresis” have been added. Thanks to Andrés J. Díaz for hit
+	  “Hysteresis” have been added. Thanks to Andrés J. Díaz for his
 	  patches.
 	* curl_json plugin: The new cURL-JSON plugin reads JSON files using
 	  the cURL library and parses the contents according to user
@@ -46,6 +726,34 @@
 	* empty_counter match: The new Empty Counter match matches value
 	  lists, where at least one data source is of type COUNTER and the
 	  counter value of all counter data sources is zero.
+
+2009-12-18, Version 4.7.5
+	* Build system, java plugin: Don't use “find -L” to search for Java
+	  headers, because it's a GNU extension.
+	* Build system: Support for parallel builds has been improved. Thanks
+	  Sebastian Harl and Stefan Völkel for looking into this.
+	* collectd: Print error messages to STDERR if no log plugin has been
+	  loaded.
+	* memory plugin: Handling of >4 Gbyte of memory has been fixed.
+	* network plugin: The license has been changed to LGPL 2.1.
+	* oracle plugin: Reconnect to the database if the connection dies.
+	* rrdcached plugin: Work-around for a bug in RRDtool 1.4rc2 has been
+	  added.
+	* snmp plugin: Handling of negative values has been fixed. Strings
+	  containing control characters are now interpreted as hex-strings.
+	* unixsock plugin: A memory leak in the LISTVAL command has been
+	  fixed. Thanks to Ben Knight for his patch.
+
+2009-10-03, Version 4.7.4
+	* Build system: Issues when building the iptables plugin have been
+	  fixed.
+	* exec plugin: Clear the signal block mask before calling exec(2).
+	* perl plugin: Declare the “environ” variable. This solves build
+	  issues on some platforms.
+	* processes plugin: Remove unnecessary call of realloc(3). Thanks to
+	  Andrés J. Díaz for the patch.
+	* unixsock plugin: Fix a (well hidden) race condition related to file
+	  descriptor handling.
 
 2009-09-13, Version 4.7.3
 	* collectd: Fix a possible but very rare invalid “free” in the caching

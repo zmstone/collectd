@@ -29,10 +29,12 @@
 #include <regex.h>
 
 #define UTILS_MATCH_FLAGS_FREE_USER_DATA 0x01
+#define UTILS_MATCH_FLAGS_EXCLUDE_REGEX 0x02
 
 struct cu_match_s
 {
   regex_t regex;
+  regex_t excluderegex;
   int flags;
 
   int (*callback) (const char *str, char * const *matches, size_t matches_num,
@@ -81,7 +83,7 @@ static int default_callback (const char __attribute__((unused)) *str,
     if (matches_num < 2)
       return (-1);
 
-    value = strtod (matches[1], &endptr);
+    value = (gauge_t) strtod (matches[1], &endptr);
     if (matches[1] == endptr)
       return (-1);
 
@@ -129,7 +131,7 @@ static int default_callback (const char __attribute__((unused)) *str,
     if (matches_num < 2)
       return (-1);
 
-    value = strtoll (matches[1], &endptr, 0);
+    value = (counter_t) strtoull (matches[1], &endptr, 0);
     if (matches[1] == endptr)
       return (-1);
 
@@ -160,7 +162,7 @@ static int default_callback (const char __attribute__((unused)) *str,
     if (matches_num < 2)
       return (-1);
 
-    value = strtoll (matches[1], &endptr, 0);
+    value = (derive_t) strtoll (matches[1], &endptr, 0);
     if (matches[1] == endptr)
       return (-1);
 
@@ -184,7 +186,7 @@ static int default_callback (const char __attribute__((unused)) *str,
     if (matches_num < 2)
       return (-1);
 
-    value = strtoll (matches[1], &endptr, 0);
+    value = (absolute_t) strtoull (matches[1], &endptr, 0);
     if (matches[1] == endptr)
       return (-1);
 
@@ -210,7 +212,7 @@ static int default_callback (const char __attribute__((unused)) *str,
 /*
  * Public functions
  */
-cu_match_t *match_create_callback (const char *regex,
+cu_match_t *match_create_callback (const char *regex, const char *excluderegex,
 		int (*callback) (const char *str,
 		  char * const *matches, size_t matches_num, void *user_data),
 		void *user_data)
@@ -218,19 +220,32 @@ cu_match_t *match_create_callback (const char *regex,
   cu_match_t *obj;
   int status;
 
-  DEBUG ("utils_match: match_create_callback: regex = %s", regex);
+  DEBUG ("utils_match: match_create_callback: regex = %s, excluderegex = %s",
+	 regex, excluderegex);
 
   obj = (cu_match_t *) malloc (sizeof (cu_match_t));
   if (obj == NULL)
     return (NULL);
   memset (obj, '\0', sizeof (cu_match_t));
 
-  status = regcomp (&obj->regex, regex, REG_EXTENDED);
+  status = regcomp (&obj->regex, regex, REG_EXTENDED | REG_NEWLINE);
   if (status != 0)
   {
     ERROR ("Compiling the regular expression \"%s\" failed.", regex);
     sfree (obj);
     return (NULL);
+  }
+
+  if (excluderegex && strcmp(excluderegex, "") != 0) {
+    status = regcomp (&obj->excluderegex, excluderegex, REG_EXTENDED);
+    if (status != 0)
+    {
+	ERROR ("Compiling the excluding regular expression \"%s\" failed.",
+	       excluderegex);
+	sfree (obj);
+	return (NULL);
+    }
+    obj->flags |= UTILS_MATCH_FLAGS_EXCLUDE_REGEX;
   }
 
   obj->callback = callback;
@@ -239,7 +254,8 @@ cu_match_t *match_create_callback (const char *regex,
   return (obj);
 } /* cu_match_t *match_create_callback */
 
-cu_match_t *match_create_simple (const char *regex, int match_ds_type)
+cu_match_t *match_create_simple (const char *regex,
+				 const char *excluderegex, int match_ds_type)
 {
   cu_match_value_t *user_data;
   cu_match_t *obj;
@@ -250,7 +266,8 @@ cu_match_t *match_create_simple (const char *regex, int match_ds_type)
   memset (user_data, '\0', sizeof (cu_match_value_t));
   user_data->ds_type = match_ds_type;
 
-  obj = match_create_callback (regex, default_callback, user_data);
+  obj = match_create_callback (regex, excluderegex,
+			       default_callback, user_data);
   if (obj == NULL)
   {
     sfree (user_data);
@@ -285,6 +302,17 @@ int match_apply (cu_match_t *obj, const char *str)
 
   if ((obj == NULL) || (str == NULL))
     return (-1);
+
+  if (obj->flags & UTILS_MATCH_FLAGS_EXCLUDE_REGEX) {
+    status = regexec (&obj->excluderegex, str,
+		      STATIC_ARRAY_SIZE (re_match), re_match,
+		      /* eflags = */ 0);
+    /* Regex did match, so exclude this line */
+    if (status == 0) {
+      DEBUG("ExludeRegex matched, don't count that line\n");
+      return (0);
+    }
+  }
 
   status = regexec (&obj->regex, str,
       STATIC_ARRAY_SIZE (re_match), re_match,

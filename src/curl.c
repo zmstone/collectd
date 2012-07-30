@@ -1,6 +1,7 @@
 /**
  * collectd - src/curl.c
  * Copyright (C) 2006-2009  Florian octo Forster
+ * Copyright (C) 2009       Aman Gupta
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -17,6 +18,7 @@
  *
  * Authors:
  *   Florian octo Forster <octo at verplant.org>
+ *   Aman Gupta <aman at tmm1.net>
  **/
 
 #include "collectd.h"
@@ -35,6 +37,7 @@ typedef struct web_match_s web_match_t;
 struct web_match_s /* {{{ */
 {
   char *regex;
+  char *exclude_regex;
   int dstype;
   char *type;
   char *instance;
@@ -289,6 +292,8 @@ static int cc_config_add_match (web_page_t *page, /* {{{ */
 
     if (strcasecmp ("Regex", child->key) == 0)
       status = cc_config_add_string ("Regex", &match->regex, child);
+    else if (strcasecmp ("ExcludeRegex", child->key) == 0)
+      status = cc_config_add_string ("ExcludeRegex", &match->exclude_regex, child);
     else if (strcasecmp ("DSType", child->key) == 0)
       status = cc_config_add_match_dstype (&match->dstype, child);
     else if (strcasecmp ("Type", child->key) == 0)
@@ -331,7 +336,8 @@ static int cc_config_add_match (web_page_t *page, /* {{{ */
   if (status != 0)
     return (status);
 
-  match->match = match_create_simple (match->regex, match->dstype);
+  match->match = match_create_simple (match->regex, match->exclude_regex,
+      match->dstype);
   if (match->match == NULL)
   {
     ERROR ("curl plugin: tail_match_add_match_simple failed.");
@@ -364,6 +370,7 @@ static int cc_page_init_curl (web_page_t *wp) /* {{{ */
     return (-1);
   }
 
+  curl_easy_setopt (wp->curl, CURLOPT_NOSIGNAL, 1);
   curl_easy_setopt (wp->curl, CURLOPT_WRITEFUNCTION, cc_curl_callback);
   curl_easy_setopt (wp->curl, CURLOPT_WRITEDATA, wp);
   curl_easy_setopt (wp->curl, CURLOPT_USERAGENT,
@@ -571,7 +578,6 @@ static void cc_submit (const web_page_t *wp, const web_match_t *wm, /* {{{ */
 
   vl.values = values;
   vl.values_len = 1;
-  vl.time = time (NULL);
   sstrncpy (vl.host, hostname_g, sizeof (vl.host));
   sstrncpy (vl.plugin, "curl", sizeof (vl.plugin));
   sstrncpy (vl.plugin_instance, wp->instance, sizeof (vl.plugin_instance));
@@ -590,7 +596,6 @@ static void cc_submit_response_time (const web_page_t *wp, double seconds) /* {{
 
   vl.values = values;
   vl.values_len = 1;
-  vl.time = time (NULL);
   sstrncpy (vl.host, hostname_g, sizeof (vl.host));
   sstrncpy (vl.plugin, "curl", sizeof (vl.plugin));
   sstrncpy (vl.plugin_instance, wp->instance, sizeof (vl.plugin_instance));

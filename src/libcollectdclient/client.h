@@ -27,7 +27,9 @@
 /*
  * Includes (for data types)
  */
-#include <stdint.h>
+#if HAVE_STDINT_H
+# include <stdint.h>
+#endif
 #include <inttypes.h>
 #include <time.h>
 
@@ -82,7 +84,7 @@ struct lcc_value_list_s
   lcc_identifier_t identifier;
 };
 typedef struct lcc_value_list_s lcc_value_list_t;
-#define LCC_VALUE_LIST_INIT { NULL, 0, 0, 0, LCC_IDENTIFIER_INIT }
+#define LCC_VALUE_LIST_INIT { NULL, NULL, 0, 0, 0, LCC_IDENTIFIER_INIT }
 
 struct lcc_connection_s;
 typedef struct lcc_connection_s lcc_connection_t;
@@ -113,6 +115,9 @@ int lcc_identifier_to_string (lcc_connection_t *c,
     char *string, size_t string_size, const lcc_identifier_t *ident);
 int lcc_string_to_identifier (lcc_connection_t *c,
     lcc_identifier_t *ident, const char *string);
+
+int lcc_sort_identifiers (lcc_connection_t *c,
+    lcc_identifier_t *idents, size_t idents_num);
 
 LCC_END_DECLS
 

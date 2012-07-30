@@ -2,7 +2,7 @@
 #define PLUGIN_H
 /**
  * collectd - src/plugin.h
- * Copyright (C) 2005-2008  Florian octo Forster
+ * Copyright (C) 2005-2011  Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -18,13 +18,16 @@
  * 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  *
  * Authors:
- *   Florian octo Forster <octo at verplant.org>
+ *   Florian octo Forster <octo at collectd.org>
  *   Sebastian Harl <sh at tokkee.org>
  **/
 
 #include "collectd.h"
 #include "configfile.h"
 #include "meta_data.h"
+#include "utils_time.h"
+
+#define PLUGIN_FLAGS_GLOBAL 0x0001
 
 #define DATA_MAX_NAME_LEN 64
 
@@ -83,8 +86,8 @@ struct value_list_s
 {
 	value_t *values;
 	int      values_len;
-	time_t   time;
-	int      interval;
+	cdtime_t time;
+	cdtime_t interval;
 	char     host[DATA_MAX_NAME_LEN];
 	char     plugin[DATA_MAX_NAME_LEN];
 	char     plugin_instance[DATA_MAX_NAME_LEN];
@@ -133,7 +136,7 @@ typedef struct notification_meta_s
 		int64_t nm_signed_int;
 		uint64_t nm_unsigned_int;
 		double nm_double;
-		bool nm_boolean;
+		_Bool nm_boolean;
 	} nm_value;
 	struct notification_meta_s *next;
 } notification_meta_t;
@@ -141,7 +144,7 @@ typedef struct notification_meta_s
 typedef struct notification_s
 {
 	int    severity;
-	time_t time;
+	cdtime_t time;
 	char   message[NOTIF_MAX_MSG_LEN];
 	char   host[DATA_MAX_NAME_LEN];
 	char   plugin[DATA_MAX_NAME_LEN];
@@ -165,8 +168,12 @@ typedef int (*plugin_init_cb) (void);
 typedef int (*plugin_read_cb) (user_data_t *);
 typedef int (*plugin_write_cb) (const data_set_t *, const value_list_t *,
 		user_data_t *);
-typedef int (*plugin_flush_cb) (int timeout, const char *identifier,
+typedef int (*plugin_flush_cb) (cdtime_t timeout, const char *identifier,
 		user_data_t *);
+/* "missing" callback. Returns less than zero on failure, zero if other
+ * callbacks should be called, greater than zero if no more callbacks should be
+ * called. */
+typedef int (*plugin_missing_cb) (const value_list_t *, user_data_t *);
 typedef void (*plugin_log_cb) (int severity, const char *message,
 		user_data_t *);
 typedef int (*plugin_shutdown_cb) (void);
@@ -200,7 +207,7 @@ void plugin_set_dir (const char *dir);
  *
  * ARGUMENTS
  *  `name'      Name of the plugin to load.
- *  `mr'        Types of functions to request from the plugin.
+ *  `flags'     Hints on how to handle this plugin.
  *
  * RETURN VALUE
  *  Returns zero upon success, a value greater than zero if no plugin was found
@@ -209,7 +216,7 @@ void plugin_set_dir (const char *dir);
  * NOTES
  *  No attempt is made to re-load an already loaded module.
  */
-int plugin_load (const char *name);
+int plugin_load (const char *name, uint32_t flags);
 
 void plugin_init_all (void);
 void plugin_read_all (void);
@@ -246,7 +253,7 @@ void plugin_shutdown_all (void);
 int plugin_write (const char *plugin,
     const data_set_t *ds, const value_list_t *vl);
 
-int plugin_flush (const char *plugin, int timeout, const char *identifier);
+int plugin_flush (const char *plugin, cdtime_t timeout, const char *identifier);
 
 /*
  * The `plugin_register_*' functions are used to make `config', `init',
@@ -262,7 +269,9 @@ int plugin_register_init (const char *name,
 		plugin_init_cb callback);
 int plugin_register_read (const char *name,
 		int (*callback) (void));
-int plugin_register_complex_read (const char *name,
+/* "user_data" will be freed automatically, unless
+ * "plugin_register_complex_read" returns an error (non-zero). */
+int plugin_register_complex_read (const char *group, const char *name,
 		plugin_read_cb callback,
 		const struct timespec *interval,
 		user_data_t *user_data);
@@ -270,7 +279,9 @@ int plugin_register_write (const char *name,
 		plugin_write_cb callback, user_data_t *user_data);
 int plugin_register_flush (const char *name,
 		plugin_flush_cb callback, user_data_t *user_data);
-int plugin_register_shutdown (char *name,
+int plugin_register_missing (const char *name,
+		plugin_missing_cb callback, user_data_t *user_data);
+int plugin_register_shutdown (const char *name,
 		plugin_shutdown_cb callback);
 int plugin_register_data_set (const data_set_t *ds);
 int plugin_register_log (const char *name,
@@ -282,9 +293,10 @@ int plugin_unregister_config (const char *name);
 int plugin_unregister_complex_config (const char *name);
 int plugin_unregister_init (const char *name);
 int plugin_unregister_read (const char *name);
-int plugin_unregister_complex_read (const char *name, void **user_data);
+int plugin_unregister_read_group (const char *group);
 int plugin_unregister_write (const char *name);
 int plugin_unregister_flush (const char *name);
+int plugin_unregister_missing (const char *name);
 int plugin_unregister_shutdown (const char *name);
 int plugin_unregister_data_set (const char *name);
 int plugin_unregister_log (const char *name);
@@ -306,11 +318,17 @@ int plugin_unregister_notification (const char *name);
  *              function.
  */
 int plugin_dispatch_values (value_list_t *vl);
+int plugin_dispatch_values_secure (const value_list_t *vl);
+int plugin_dispatch_missing (const value_list_t *vl);
 
 int plugin_dispatch_notification (const notification_t *notif);
 
 void plugin_log (int level, const char *format, ...)
 	__attribute__ ((format(printf,2,3)));
+
+/* These functions return the parsed severity or less than zero on failure. */
+int parse_log_severity (const char *severity);
+int parse_notif_severity (const char *severity);
 
 #define ERROR(...)   plugin_log (LOG_ERR,     __VA_ARGS__)
 #define WARNING(...) plugin_log (LOG_WARNING, __VA_ARGS__)
@@ -338,7 +356,7 @@ int plugin_notification_meta_add_double (notification_t *n,
     double value);
 int plugin_notification_meta_add_boolean (notification_t *n,
     const char *name,
-    bool value);
+    _Bool value);
 
 int plugin_notification_meta_copy (notification_t *dst,
     const notification_t *src);

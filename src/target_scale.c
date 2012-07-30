@@ -29,6 +29,9 @@ struct ts_data_s
 {
 	double factor;
 	double offset;
+
+	char **data_sources;
+	size_t data_sources_num;
 };
 typedef struct ts_data_s ts_data_t;
 
@@ -96,7 +99,7 @@ static int ts_invoke_counter (const data_set_t *ds, value_list_t *vl, /* {{{ */
 		{
 			difference = curr_counter - prev_counter;
 		}
-		rate = ((double) difference) / ((double) vl->interval);
+		rate = ((double) difference) / CDTIME_T_TO_DOUBLE (vl->interval);
 
 		/* Modify the rate. */
 		if (!isnan (data->factor))
@@ -105,7 +108,7 @@ static int ts_invoke_counter (const data_set_t *ds, value_list_t *vl, /* {{{ */
 			rate += data->offset;
 
 		/* Calculate the internal counter. */
-		int_fraction += (rate * ((double) vl->interval));
+		int_fraction += (rate * CDTIME_T_TO_DOUBLE (vl->interval));
 		difference = (uint64_t) int_fraction;
 		int_fraction -= ((double) difference);
 		int_counter  += difference;
@@ -199,7 +202,7 @@ static int ts_invoke_derive (const data_set_t *ds, value_list_t *vl, /* {{{ */
 
 		/* Calcualte the rate */
 		difference = curr_derive - prev_derive;
-		rate = ((double) difference) / ((double) vl->interval);
+		rate = ((double) difference) / CDTIME_T_TO_DOUBLE (vl->interval);
 
 		/* Modify the rate. */
 		if (!isnan (data->factor))
@@ -208,7 +211,7 @@ static int ts_invoke_derive (const data_set_t *ds, value_list_t *vl, /* {{{ */
 			rate += data->offset;
 
 		/* Calculate the internal derive. */
-		int_fraction += (rate * ((double) vl->interval));
+		int_fraction += (rate * CDTIME_T_TO_DOUBLE (vl->interval));
 		if (int_fraction < 0.0) /* handle negative integer rounding correctly */
 			difference = ((int64_t) int_fraction) - 1;
 		else
@@ -263,7 +266,7 @@ static int ts_invoke_absolute (const data_set_t *ds, value_list_t *vl, /* {{{ */
 	if (status != 0)
 		int_fraction = 0.0;
 
-	rate = ((double) curr_absolute) / ((double) vl->interval);
+	rate = ((double) curr_absolute) / CDTIME_T_TO_DOUBLE (vl->interval);
 
 	/* Modify the rate. */
 	if (!isnan (data->factor))
@@ -272,7 +275,7 @@ static int ts_invoke_absolute (const data_set_t *ds, value_list_t *vl, /* {{{ */
 		rate += data->offset;
 
 	/* Calculate the new absolute. */
-	int_fraction += (rate * ((double) vl->interval));
+	int_fraction += (rate * CDTIME_T_TO_DOUBLE (vl->interval));
 	curr_absolute = (uint64_t) int_fraction;
 	int_fraction -= ((double) curr_absolute);
 
@@ -300,12 +303,85 @@ static int ts_config_set_double (double *ret, oconfig_item_t *ci) /* {{{ */
 	return (0);
 } /* }}} int ts_config_set_double */
 
+static int ts_config_add_data_source(ts_data_t *data, /* {{{ */
+		oconfig_item_t *ci)
+{
+	size_t new_data_sources_num;
+	char **temp;
+	int i;
+
+	/* Check number of arbuments. */
+	if (ci->values_num < 1)
+	{
+		ERROR ("`value' match: `%s' needs at least one argument.",
+				ci->key);
+		return (-1);
+	}
+
+	/* Check type of arguments */
+	for (i = 0; i < ci->values_num; i++)
+	{
+		if (ci->values[i].type == OCONFIG_TYPE_STRING)
+			continue;
+
+		ERROR ("`value' match: `%s' accepts only string arguments "
+				"(argument %i is a %s).",
+				ci->key, i + 1,
+				(ci->values[i].type == OCONFIG_TYPE_BOOLEAN)
+				? "truth value" : "number");
+		return (-1);
+	}
+
+	/* Allocate space for the char pointers */
+	new_data_sources_num = data->data_sources_num + ((size_t) ci->values_num);
+	temp = (char **) realloc (data->data_sources,
+			new_data_sources_num * sizeof (char *));
+	if (temp == NULL)
+	{
+		ERROR ("`value' match: realloc failed.");
+		return (-1);
+	}
+	data->data_sources = temp;
+
+	/* Copy the strings, allocating memory as needed.  */
+	for (i = 0; i < ci->values_num; i++)
+	{
+		size_t j;
+
+		/* If we get here, there better be memory for us to write to.  */
+		assert (data->data_sources_num < new_data_sources_num);
+
+		j = data->data_sources_num;
+		data->data_sources[j] = sstrdup (ci->values[i].value.string);
+		if (data->data_sources[j] == NULL)
+		{
+			ERROR ("`value' match: sstrdup failed.");
+			continue;
+		}
+		data->data_sources_num++;
+	}
+
+	return (0);
+} /* }}} int ts_config_add_data_source */
+
 static int ts_destroy (void **user_data) /* {{{ */
 {
+	ts_data_t *data;
+
 	if (user_data == NULL)
 		return (-EINVAL);
 
-	free (*user_data);
+	data = (ts_data_t *) *user_data;
+
+	if ((data != NULL) && (data->data_sources != NULL))
+	{
+		size_t i;
+		for (i = 0; i < data->data_sources_num; i++)
+			sfree (data->data_sources[i]);
+		sfree (data->data_sources);
+	}
+
+	sfree (data);
 	*user_data = NULL;
 
 	return (0);
@@ -337,6 +413,8 @@ static int ts_create (const oconfig_item_t *ci, void **user_data) /* {{{ */
 				status = ts_config_set_double (&data->factor, child);
 		else if (strcasecmp ("Offset", child->key) == 0)
 				status = ts_config_set_double (&data->offset, child);
+		else if (strcasecmp ("DataSource", child->key) == 0)
+				status = ts_config_add_data_source(data, child);
 		else
 		{
 			ERROR ("Target `scale': The `%s' configuration option is not understood "
@@ -389,6 +467,18 @@ static int ts_invoke (const data_set_t *ds, value_list_t *vl, /* {{{ */
 
 	for (i = 0; i < ds->ds_num; i++)
 	{
+		/* If we've got a list of data sources, is it in the list? */
+		if (data->data_sources) {
+			size_t j;
+			for (j = 0; j < data->data_sources_num; j++)
+				if (strcasecmp(ds->ds[i].name, data->data_sources[j]) == 0)
+					break;
+
+			/* No match, ignore */
+			if (j >= data->data_sources_num)
+				continue;
+		}
+
 		if (ds->ds[i].type == DS_TYPE_COUNTER)
 			ts_invoke_counter (ds, vl, data, i);
 		else if (ds->ds[i].type == DS_TYPE_GAUGE)

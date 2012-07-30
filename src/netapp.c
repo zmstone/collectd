@@ -38,8 +38,8 @@ typedef void service_handler_t(host_config_t *host, na_elem_t *result, void *dat
 
 struct cna_interval_s
 {
-	time_t interval;
-	time_t last_read;
+	cdtime_t interval;
+	cdtime_t last_read;
 };
 typedef struct cna_interval_s cna_interval_t;
 
@@ -79,7 +79,7 @@ typedef struct {
 	cna_interval_t interval;
 	na_elem_t *query;
 
-	time_t timestamp;
+	cdtime_t timestamp;
 	uint64_t name_cache_hit;
 	uint64_t name_cache_miss;
 	uint64_t find_dir_hit;
@@ -104,7 +104,7 @@ typedef struct {
 typedef struct disk_s {
 	char *name;
 	uint32_t flags;
-	time_t timestamp;
+	cdtime_t timestamp;
 	uint64_t disk_busy;
 	uint64_t base_for_disk_busy;
 	double disk_busy_percent;
@@ -153,7 +153,7 @@ typedef struct data_volume_perf_s data_volume_perf_t;
 struct data_volume_perf_s {
 	char *name;
 	uint32_t flags;
-	time_t timestamp;
+	cdtime_t timestamp;
 
 	uint64_t read_bytes;
 	uint64_t write_bytes;
@@ -242,7 +242,7 @@ struct host_config_s {
 	int port;
 	char *username;
 	char *password;
-	int interval;
+	cdtime_t interval;
 
 	na_server_t *srv;
 	cfg_wafl_t *cfg_wafl;
@@ -566,7 +566,7 @@ static int submit_values (const char *host, /* {{{ */
 		const char *plugin_inst,
 		const char *type, const char *type_inst,
 		value_t *values, int values_len,
-		time_t timestamp)
+		cdtime_t timestamp, cdtime_t interval)
 {
 	value_list_t vl = VALUE_LIST_INIT;
 
@@ -575,6 +575,9 @@ static int submit_values (const char *host, /* {{{ */
 
 	if (timestamp > 0)
 		vl.time = timestamp;
+
+	if (interval > 0)
+		vl.interval = interval;
 
 	if (host != NULL)
 		sstrncpy (vl.host, host, sizeof (vl.host));
@@ -590,33 +593,34 @@ static int submit_values (const char *host, /* {{{ */
 	return (plugin_dispatch_values (&vl));
 } /* }}} int submit_uint64 */
 
-static int submit_two_counters (const char *host, const char *plugin_inst, /* {{{ */
-		const char *type, const char *type_inst, counter_t val0, counter_t val1,
-		time_t timestamp)
+static int submit_two_derive (const char *host, const char *plugin_inst, /* {{{ */
+		const char *type, const char *type_inst, derive_t val0, derive_t val1,
+		cdtime_t timestamp, cdtime_t interval)
 {
 	value_t values[2];
 
-	values[0].counter = val0;
-	values[1].counter = val1;
+	values[0].derive = val0;
+	values[1].derive = val1;
 
 	return (submit_values (host, plugin_inst, type, type_inst,
-				values, 2, timestamp));
-} /* }}} int submit_two_counters */
+				values, 2, timestamp, interval));
+} /* }}} int submit_two_derive */
 
-static int submit_counter (const char *host, const char *plugin_inst, /* {{{ */
-		const char *type, const char *type_inst, counter_t counter, time_t timestamp)
+static int submit_derive (const char *host, const char *plugin_inst, /* {{{ */
+		const char *type, const char *type_inst, derive_t counter,
+		cdtime_t timestamp, cdtime_t interval)
 {
 	value_t v;
 
-	v.counter = counter;
+	v.derive = counter;
 
 	return (submit_values (host, plugin_inst, type, type_inst,
-				&v, 1, timestamp));
-} /* }}} int submit_counter */
+				&v, 1, timestamp, interval));
+} /* }}} int submit_derive */
 
 static int submit_two_gauge (const char *host, const char *plugin_inst, /* {{{ */
 		const char *type, const char *type_inst, gauge_t val0, gauge_t val1,
-		time_t timestamp)
+		cdtime_t timestamp, cdtime_t interval)
 {
 	value_t values[2];
 
@@ -624,18 +628,19 @@ static int submit_two_gauge (const char *host, const char *plugin_inst, /* {{{ *
 	values[1].gauge = val1;
 
 	return (submit_values (host, plugin_inst, type, type_inst,
-				values, 2, timestamp));
+				values, 2, timestamp, interval));
 } /* }}} int submit_two_gauge */
 
 static int submit_double (const char *host, const char *plugin_inst, /* {{{ */
-		const char *type, const char *type_inst, double d, time_t timestamp)
+		const char *type, const char *type_inst, double d,
+		cdtime_t timestamp, cdtime_t interval)
 {
 	value_t v;
 
 	v.gauge = (gauge_t) d;
 
 	return (submit_values (host, plugin_inst, type, type_inst,
-				&v, 1, timestamp));
+				&v, 1, timestamp, interval));
 } /* }}} int submit_uint64 */
 
 /* Calculate hit ratio from old and new counters and submit the resulting
@@ -647,7 +652,8 @@ static int submit_cache_ratio (const char *host, /* {{{ */
 		uint64_t new_misses,
 		uint64_t old_hits,
 		uint64_t old_misses,
-		time_t timestamp)
+		cdtime_t timestamp,
+		cdtime_t interval)
 {
 	value_t v;
 
@@ -664,12 +670,12 @@ static int submit_cache_ratio (const char *host, /* {{{ */
 	}
 
 	return (submit_values (host, plugin_inst, "cache_ratio", type_inst,
-				&v, 1, timestamp));
+				&v, 1, timestamp, interval));
 } /* }}} int submit_cache_ratio */
 
 /* Submits all the caches used by WAFL. Uses "submit_cache_ratio". */
 static int submit_wafl_data (const char *hostname, const char *instance, /* {{{ */
-		cfg_wafl_t *old_data, const cfg_wafl_t *new_data)
+		cfg_wafl_t *old_data, const cfg_wafl_t *new_data, int interval)
 {
 	/* Submit requested counters */
 	if (HAS_ALL_FLAGS (old_data->flags, CFG_WAFL_NAME_CACHE | HAVE_WAFL_NAME_CACHE)
@@ -677,28 +683,28 @@ static int submit_wafl_data (const char *hostname, const char *instance, /* {{{ 
 		submit_cache_ratio (hostname, instance, "name_cache_hit",
 				new_data->name_cache_hit, new_data->name_cache_miss,
 				old_data->name_cache_hit, old_data->name_cache_miss,
-				new_data->timestamp);
+				new_data->timestamp, interval);
 
 	if (HAS_ALL_FLAGS (old_data->flags, CFG_WAFL_DIR_CACHE | HAVE_WAFL_FIND_DIR)
 			&& HAS_ALL_FLAGS (new_data->flags, HAVE_WAFL_FIND_DIR))
 		submit_cache_ratio (hostname, instance, "find_dir_hit",
 				new_data->find_dir_hit, new_data->find_dir_miss,
 				old_data->find_dir_hit, old_data->find_dir_miss,
-				new_data->timestamp);
+				new_data->timestamp, interval);
 
 	if (HAS_ALL_FLAGS (old_data->flags, CFG_WAFL_BUF_CACHE | HAVE_WAFL_BUF_HASH)
 			&& HAS_ALL_FLAGS (new_data->flags, HAVE_WAFL_BUF_HASH))
 		submit_cache_ratio (hostname, instance, "buf_hash_hit",
 				new_data->buf_hash_hit, new_data->buf_hash_miss,
 				old_data->buf_hash_hit, old_data->buf_hash_miss,
-				new_data->timestamp);
+				new_data->timestamp, interval);
 
 	if (HAS_ALL_FLAGS (old_data->flags, CFG_WAFL_INODE_CACHE | HAVE_WAFL_INODE_CACHE)
 			&& HAS_ALL_FLAGS (new_data->flags, HAVE_WAFL_INODE_CACHE))
 		submit_cache_ratio (hostname, instance, "inode_cache_hit",
 				new_data->inode_cache_hit, new_data->inode_cache_miss,
 				old_data->inode_cache_hit, old_data->inode_cache_miss,
-				new_data->timestamp);
+				new_data->timestamp, interval);
 
 	/* Clear old HAVE_* flags */
 	old_data->flags &= ~HAVE_WAFL_ALL;
@@ -724,7 +730,7 @@ static int submit_wafl_data (const char *hostname, const char *instance, /* {{{ 
  * update flags appropriately. */
 static int submit_volume_perf_data (const char *hostname, /* {{{ */
 		data_volume_perf_t *old_data,
-		const data_volume_perf_t *new_data)
+		const data_volume_perf_t *new_data, int interval)
 {
 	char plugin_instance[DATA_MAX_NAME_LEN];
 
@@ -738,16 +744,16 @@ static int submit_volume_perf_data (const char *hostname, /* {{{ */
 	if (HAS_ALL_FLAGS (old_data->flags, CFG_VOLUME_PERF_IO)
 			&& HAS_ALL_FLAGS (new_data->flags, HAVE_VOLUME_PERF_BYTES_READ | HAVE_VOLUME_PERF_BYTES_WRITE))
 	{
-		submit_two_counters (hostname, plugin_instance, "disk_octets", /* type instance = */ NULL,
-				(counter_t) new_data->read_bytes, (counter_t) new_data->write_bytes, new_data->timestamp);
+		submit_two_derive (hostname, plugin_instance, "disk_octets", /* type instance = */ NULL,
+				(derive_t) new_data->read_bytes, (derive_t) new_data->write_bytes, new_data->timestamp, interval);
 	}
 
 	/* Check for and submit disk-operations values */
 	if (HAS_ALL_FLAGS (old_data->flags, CFG_VOLUME_PERF_OPS)
 			&& HAS_ALL_FLAGS (new_data->flags, HAVE_VOLUME_PERF_OPS_READ | HAVE_VOLUME_PERF_OPS_WRITE))
 	{
-		submit_two_counters (hostname, plugin_instance, "disk_ops", /* type instance = */ NULL,
-				(counter_t) new_data->read_ops, (counter_t) new_data->write_ops, new_data->timestamp);
+		submit_two_derive (hostname, plugin_instance, "disk_ops", /* type instance = */ NULL,
+				(derive_t) new_data->read_ops, (derive_t) new_data->write_ops, new_data->timestamp, interval);
 	}
 
 	/* Check for, calculate and submit disk-latency values */
@@ -791,7 +797,7 @@ static int submit_volume_perf_data (const char *hostname, /* {{{ */
 		}
 
 		submit_two_gauge (hostname, plugin_instance, "disk_latency", /* type instance = */ NULL,
-				latency_per_op_read, latency_per_op_write, new_data->timestamp);
+				latency_per_op_read, latency_per_op_write, new_data->timestamp, interval);
 	}
 
 	/* Clear all HAVE_* flags. */
@@ -812,6 +818,16 @@ static int submit_volume_perf_data (const char *hostname, /* {{{ */
 	return (0);
 } /* }}} int submit_volume_perf_data */
 
+static cdtime_t cna_child_get_cdtime (na_elem_t *data) /* {{{ */
+{
+	time_t t;
+
+	t = (time_t) na_child_get_uint64 (data, "timestamp", /* default = */ 0);
+
+	return (TIME_T_TO_CDTIME_T (t));
+} /* }}} cdtime_t cna_child_get_cdtime */
+
+
 /* 
  * Query functions
  *
@@ -820,7 +836,7 @@ static int submit_volume_perf_data (const char *hostname, /* {{{ */
  */
 /* Data corresponding to <WAFL /> */
 static int cna_handle_wafl_data (const char *hostname, cfg_wafl_t *cfg_wafl, /* {{{ */
-		na_elem_t *data)
+		na_elem_t *data, int interval)
 {
 	cfg_wafl_t perf_data;
 	const char *plugin_inst;
@@ -831,13 +847,14 @@ static int cna_handle_wafl_data (const char *hostname, cfg_wafl_t *cfg_wafl, /* 
 
 	memset (&perf_data, 0, sizeof (perf_data));
 	
-	perf_data.timestamp = (time_t) na_child_get_uint64 (data, "timestamp", 0);
+	perf_data.timestamp = cna_child_get_cdtime (data);
 
 	instances = na_elem_child(na_elem_child (data, "instances"), "instance-data");
 	if (instances == NULL)
 	{
 		ERROR ("netapp plugin: cna_handle_wafl_data: "
-				"na_elem_child (\"instances\") failed.");
+				"na_elem_child (\"instances\") failed "
+				"for host %s.", hostname);
 		return (-1);
 	}
 
@@ -845,7 +862,8 @@ static int cna_handle_wafl_data (const char *hostname, cfg_wafl_t *cfg_wafl, /* 
 	if (plugin_inst == NULL)
 	{
 		ERROR ("netapp plugin: cna_handle_wafl_data: "
-				"na_child_get_string (\"name\") failed.");
+				"na_child_get_string (\"name\") failed "
+				"for host %s.", hostname);
 		return (-1);
 	}
 
@@ -892,11 +910,12 @@ static int cna_handle_wafl_data (const char *hostname, cfg_wafl_t *cfg_wafl, /* 
 			perf_data.flags |= HAVE_WAFL_INODE_CACHE_MISS;
 		} else {
 			DEBUG("netapp plugin: cna_handle_wafl_data: "
-					"Found unexpected child: %s", name);
+					"Found unexpected child: %s "
+					"for host %s.", name, hostname);
 		}
 	}
 
-	return (submit_wafl_data (hostname, plugin_inst, cfg_wafl, &perf_data));
+	return (submit_wafl_data (hostname, plugin_inst, cfg_wafl, &perf_data, interval));
 } /* }}} void cna_handle_wafl_data */
 
 static int cna_setup_wafl (cfg_wafl_t *cw) /* {{{ */
@@ -925,14 +944,14 @@ static int cna_setup_wafl (cfg_wafl_t *cw) /* {{{ */
 		ERROR ("netapp plugin: na_elem_new failed.");
 		return (-1);
 	}
-	na_child_add_string(e, "foo", "name_cache_hit");
-	na_child_add_string(e, "foo", "name_cache_miss");
-	na_child_add_string(e, "foo", "find_dir_hit");
-	na_child_add_string(e, "foo", "find_dir_miss");
-	na_child_add_string(e, "foo", "buf_hash_hit");
-	na_child_add_string(e, "foo", "buf_hash_miss");
-	na_child_add_string(e, "foo", "inode_cache_hit");
-	na_child_add_string(e, "foo", "inode_cache_miss");
+	na_child_add_string(e, "counter", "name_cache_hit");
+	na_child_add_string(e, "counter", "name_cache_miss");
+	na_child_add_string(e, "counter", "find_dir_hit");
+	na_child_add_string(e, "counter", "find_dir_miss");
+	na_child_add_string(e, "counter", "buf_hash_hit");
+	na_child_add_string(e, "counter", "buf_hash_miss");
+	na_child_add_string(e, "counter", "inode_cache_hit");
+	na_child_add_string(e, "counter", "inode_cache_miss");
 
 	na_child_add(cw->query, e);
 
@@ -943,7 +962,7 @@ static int cna_query_wafl (host_config_t *host) /* {{{ */
 {
 	na_elem_t *data;
 	int status;
-	time_t now;
+	cdtime_t now;
 
 	if (host == NULL)
 		return (EINVAL);
@@ -952,7 +971,7 @@ static int cna_query_wafl (host_config_t *host) /* {{{ */
 	if (host->cfg_wafl == NULL)
 		return (0);
 
-	now = time (NULL);
+	now = cdtime ();
 	if ((host->cfg_wafl->interval.interval + host->cfg_wafl->interval.last_read) > now)
 		return (0);
 
@@ -964,13 +983,13 @@ static int cna_query_wafl (host_config_t *host) /* {{{ */
 	data = na_server_invoke_elem(host->srv, host->cfg_wafl->query);
 	if (na_results_status (data) != NA_OK)
 	{
-		ERROR ("netapp plugin: cna_query_wafl: na_server_invoke_elem failed: %s",
-				na_results_reason (data));
+		ERROR ("netapp plugin: cna_query_wafl: na_server_invoke_elem failed for host %s: %s",
+				host->name, na_results_reason (data));
 		na_elem_free (data);
 		return (-1);
 	}
 
-	status = cna_handle_wafl_data (host->name, host->cfg_wafl, data);
+	status = cna_handle_wafl_data (host->name, host->cfg_wafl, data, host->interval);
 
 	if (status == 0)
 		host->cfg_wafl->interval.last_read = now;
@@ -981,9 +1000,9 @@ static int cna_query_wafl (host_config_t *host) /* {{{ */
 
 /* Data corresponding to <Disks /> */
 static int cna_handle_disk_data (const char *hostname, /* {{{ */
-		cfg_disk_t *cfg_disk, na_elem_t *data)
+		cfg_disk_t *cfg_disk, na_elem_t *data, cdtime_t interval)
 {
-	time_t timestamp;
+	cdtime_t timestamp;
 	na_elem_t *instances;
 	na_elem_t *instance;
 	na_elem_iter_t instance_iter;
@@ -992,13 +1011,14 @@ static int cna_handle_disk_data (const char *hostname, /* {{{ */
 	if ((cfg_disk == NULL) || (data == NULL))
 		return (EINVAL);
 	
-	timestamp = (time_t) na_child_get_uint64(data, "timestamp", 0);
+	timestamp = cna_child_get_cdtime (data);
 
 	instances = na_elem_child (data, "instances");
 	if (instances == NULL)
 	{
 		ERROR ("netapp plugin: cna_handle_disk_data: "
-				"na_elem_child (\"instances\") failed.");
+				"na_elem_child (\"instances\") failed "
+				"for host %s.", hostname);
 		return (-1);
 	}
 
@@ -1094,7 +1114,7 @@ static int cna_handle_disk_data (const char *hostname, /* {{{ */
 
 	if ((cfg_disk->flags & CFG_DISK_BUSIEST) && (worst_disk != NULL))
 		submit_double (hostname, "system", "percent", "disk_busy",
-				worst_disk->disk_busy_percent, timestamp);
+				worst_disk->disk_busy_percent, timestamp, interval);
 
 	return (0);
 } /* }}} int cna_handle_disk_data */
@@ -1125,8 +1145,8 @@ static int cna_setup_disk (cfg_disk_t *cd) /* {{{ */
 		ERROR ("netapp plugin: na_elem_new failed.");
 		return (-1);
 	}
-	na_child_add_string(e, "foo", "disk_busy");
-	na_child_add_string(e, "foo", "base_for_disk_busy");
+	na_child_add_string(e, "counter", "disk_busy");
+	na_child_add_string(e, "counter", "base_for_disk_busy");
 	na_child_add(cd->query, e);
 
 	return (0);
@@ -1136,7 +1156,7 @@ static int cna_query_disk (host_config_t *host) /* {{{ */
 {
 	na_elem_t *data;
 	int status;
-	time_t now;
+	cdtime_t now;
 
 	if (host == NULL)
 		return (EINVAL);
@@ -1146,7 +1166,7 @@ static int cna_query_disk (host_config_t *host) /* {{{ */
 	if (host->cfg_disk == NULL)
 		return (0);
 
-	now = time (NULL);
+	now = cdtime ();
 	if ((host->cfg_disk->interval.interval + host->cfg_disk->interval.last_read) > now)
 		return (0);
 
@@ -1158,13 +1178,13 @@ static int cna_query_disk (host_config_t *host) /* {{{ */
 	data = na_server_invoke_elem(host->srv, host->cfg_disk->query);
 	if (na_results_status (data) != NA_OK)
 	{
-		ERROR ("netapp plugin: cna_query_disk: na_server_invoke_elem failed: %s",
-				na_results_reason (data));
+		ERROR ("netapp plugin: cna_query_disk: na_server_invoke_elem failed for host %s: %s",
+				host->name, na_results_reason (data));
 		na_elem_free (data);
 		return (-1);
 	}
 
-	status = cna_handle_disk_data (host->name, host->cfg_disk, data);
+	status = cna_handle_disk_data (host->name, host->cfg_disk, data, host->interval);
 
 	if (status == 0)
 		host->cfg_disk->interval.last_read = now;
@@ -1175,20 +1195,21 @@ static int cna_query_disk (host_config_t *host) /* {{{ */
 
 /* Data corresponding to <VolumePerf /> */
 static int cna_handle_volume_perf_data (const char *hostname, /* {{{ */
-		cfg_volume_perf_t *cvp, na_elem_t *data)
+		cfg_volume_perf_t *cvp, na_elem_t *data, cdtime_t interval)
 {
-	time_t timestamp;
+	cdtime_t timestamp;
 	na_elem_t *elem_instances;
 	na_elem_iter_t iter_instances;
 	na_elem_t *elem_instance;
 	
-	timestamp = (time_t) na_child_get_uint64(data, "timestamp", 0);
+	timestamp = cna_child_get_cdtime (data);
 
 	elem_instances = na_elem_child(data, "instances");
 	if (elem_instances == NULL)
 	{
 		ERROR ("netapp plugin: handle_volume_perf_data: "
-				"na_elem_child (\"instances\") failed.");
+				"na_elem_child (\"instances\") failed "
+				"for host %s.", hostname);
 		return (-1);
 	}
 
@@ -1259,7 +1280,7 @@ static int cna_handle_volume_perf_data (const char *hostname, /* {{{ */
 			}
 		} /* for (elem_counter) */
 
-		submit_volume_perf_data (hostname, v, &perf_data);
+		submit_volume_perf_data (hostname, v, &perf_data, interval);
 	} /* for (volume) */
 
 	return (0);
@@ -1291,13 +1312,12 @@ static int cna_setup_volume_perf (cfg_volume_perf_t *cd) /* {{{ */
 		ERROR ("netapp plugin: na_elem_new failed.");
 		return (-1);
 	}
-	/* "foo" means: This string has to be here but the content doesn't matter. */
-	na_child_add_string(e, "foo", "read_ops");
-	na_child_add_string(e, "foo", "write_ops");
-	na_child_add_string(e, "foo", "read_data");
-	na_child_add_string(e, "foo", "write_data");
-	na_child_add_string(e, "foo", "read_latency");
-	na_child_add_string(e, "foo", "write_latency");
+	na_child_add_string(e, "counter", "read_ops");
+	na_child_add_string(e, "counter", "write_ops");
+	na_child_add_string(e, "counter", "read_data");
+	na_child_add_string(e, "counter", "write_data");
+	na_child_add_string(e, "counter", "read_latency");
+	na_child_add_string(e, "counter", "write_latency");
 	na_child_add(cd->query, e);
 
 	return (0);
@@ -1307,7 +1327,7 @@ static int cna_query_volume_perf (host_config_t *host) /* {{{ */
 {
 	na_elem_t *data;
 	int status;
-	time_t now;
+	cdtime_t now;
 
 	if (host == NULL)
 		return (EINVAL);
@@ -1317,7 +1337,7 @@ static int cna_query_volume_perf (host_config_t *host) /* {{{ */
 	if (host->cfg_volume_perf == NULL)
 		return (0);
 
-	now = time (NULL);
+	now = cdtime ();
 	if ((host->cfg_volume_perf->interval.interval + host->cfg_volume_perf->interval.last_read) > now)
 		return (0);
 
@@ -1329,13 +1349,13 @@ static int cna_query_volume_perf (host_config_t *host) /* {{{ */
 	data = na_server_invoke_elem (host->srv, host->cfg_volume_perf->query);
 	if (na_results_status (data) != NA_OK)
 	{
-		ERROR ("netapp plugin: cna_query_volume_perf: na_server_invoke_elem failed: %s",
-				na_results_reason (data));
+		ERROR ("netapp plugin: cna_query_volume_perf: na_server_invoke_elem failed for host %s: %s",
+				host->name, na_results_reason (data));
 		na_elem_free (data);
 		return (-1);
 	}
 
-	status = cna_handle_volume_perf_data (host->name, host->cfg_volume_perf, data);
+	status = cna_handle_volume_perf_data (host->name, host->cfg_volume_perf, data, host->interval);
 
 	if (status == 0)
 		host->cfg_volume_perf->interval.last_read = now;
@@ -1346,7 +1366,7 @@ static int cna_query_volume_perf (host_config_t *host) /* {{{ */
 
 /* Data corresponding to <VolumeUsage /> */
 static int cna_submit_volume_usage_data (const char *hostname, /* {{{ */
-		cfg_volume_usage_t *cfg_volume)
+		cfg_volume_usage_t *cfg_volume, int interval)
 {
 	data_volume_usage_t *v;
 
@@ -1385,8 +1405,8 @@ static int cna_submit_volume_usage_data (const char *hostname, /* {{{ */
 			else
 			{
 				ERROR ("netapp plugin: (norm_used = %"PRIu64") < (snap_norm_used = "
-						"%"PRIu64"). Invalidating both.",
-						norm_used, snap_norm_used);
+						"%"PRIu64") for host %s. Invalidating both.",
+						norm_used, snap_norm_used, hostname);
 				v->flags &= ~(HAVE_VOLUME_USAGE_NORM_USED | HAVE_VOLUME_USAGE_SNAP_USED);
 			}
 		}
@@ -1394,32 +1414,32 @@ static int cna_submit_volume_usage_data (const char *hostname, /* {{{ */
 		if (HAS_ALL_FLAGS (v->flags, HAVE_VOLUME_USAGE_NORM_FREE))
 			submit_double (hostname, /* plugin instance = */ plugin_instance,
 					"df_complex", "free",
-					(double) norm_free, /* timestamp = */ 0);
+					(double) norm_free, /* timestamp = */ 0, interval);
 
 		if (HAS_ALL_FLAGS (v->flags, HAVE_VOLUME_USAGE_SIS_SAVED))
 			submit_double (hostname, /* plugin instance = */ plugin_instance,
 					"df_complex", "sis_saved",
-					(double) sis_saved, /* timestamp = */ 0);
+					(double) sis_saved, /* timestamp = */ 0, interval);
 
 		if (HAS_ALL_FLAGS (v->flags, HAVE_VOLUME_USAGE_NORM_USED))
 			submit_double (hostname, /* plugin instance = */ plugin_instance,
 					"df_complex", "used",
-					(double) norm_used, /* timestamp = */ 0);
+					(double) norm_used, /* timestamp = */ 0, interval);
 
 		if (HAS_ALL_FLAGS (v->flags, HAVE_VOLUME_USAGE_SNAP_RSVD))
 			submit_double (hostname, /* plugin instance = */ plugin_instance,
 					"df_complex", "snap_reserved",
-					(double) snap_reserve_free, /* timestamp = */ 0);
+					(double) snap_reserve_free, /* timestamp = */ 0, interval);
 
 		if (HAS_ALL_FLAGS (v->flags, HAVE_VOLUME_USAGE_SNAP_USED | HAVE_VOLUME_USAGE_SNAP_RSVD))
 			submit_double (hostname, /* plugin instance = */ plugin_instance,
 					"df_complex", "snap_reserve_used",
-					(double) snap_reserve_used, /* timestamp = */ 0);
+					(double) snap_reserve_used, /* timestamp = */ 0, interval);
 
 		if (HAS_ALL_FLAGS (v->flags, HAVE_VOLUME_USAGE_SNAP_USED))
 			submit_double (hostname, /* plugin instance = */ plugin_instance,
 					"df_complex", "snap_normal_used",
-					(double) snap_norm_used, /* timestamp = */ 0);
+					(double) snap_norm_used, /* timestamp = */ 0, interval);
 
 		/* Clear all the HAVE_* flags */
 		v->flags &= ~HAVE_VOLUME_USAGE_ALL;
@@ -1436,7 +1456,7 @@ static int cna_change_volume_status (const char *hostname, /* {{{ */
 	notification_t n;
 
 	memset (&n, 0, sizeof (&n));
-	n.time = time (NULL);
+	n.time = cdtime ();
 	sstrncpy (n.host, hostname, sizeof (n.host));
 	sstrncpy (n.plugin, "netapp", sizeof (n.plugin));
 	sstrncpy (n.plugin_instance, v->name, sizeof (n.plugin_instance));
@@ -1471,8 +1491,8 @@ static void cna_handle_volume_snap_usage(const host_config_t *host, /* {{{ */
 				cna_change_volume_status (host->name, v);
 		} else {
 			ERROR ("netapp plugin: cna_handle_volume_snap_usage: na_server_invoke_elem for "
-					"volume \"%s\" failed with error %d: %s", v->name,
-					na_results_errno(data), na_results_reason(data));
+					"volume \"%s\" on host %s failed with error %d: %s", v->name,
+					host->name, na_results_errno(data), na_results_reason(data));
 		}
 		na_elem_free(data);
 		return;
@@ -1485,7 +1505,8 @@ static void cna_handle_volume_snap_usage(const host_config_t *host, /* {{{ */
 	if (elem_snapshots == NULL)
 	{
 		ERROR ("netapp plugin: cna_handle_volume_snap_usage: "
-				"na_elem_child (\"snapshots\") failed.");
+				"na_elem_child (\"snapshots\") failed "
+				"for host %s.", host->name);
 		na_elem_free(data);
 		return;
 	}
@@ -1519,7 +1540,8 @@ static int cna_handle_volume_usage_data (const host_config_t *host, /* {{{ */
 	if (elem_volumes == NULL)
 	{
 		ERROR ("netapp plugin: cna_handle_volume_usage_data: "
-				"na_elem_child (\"volumes\") failed.");
+				"na_elem_child (\"volumes\") failed "
+				"for host %s.", host->name);
 		return (-1);
 	}
 
@@ -1580,6 +1602,9 @@ static int cna_handle_volume_usage_data (const host_config_t *host, /* {{{ */
 		if (sis == NULL)
 			continue;
 
+		if (na_elem_child(sis, "sis-info"))
+			sis = na_elem_child(sis, "sis-info");
+		
 		sis_state = na_child_get_string(sis, "state");
 		if (sis_state == NULL)
 			continue;
@@ -1644,7 +1669,7 @@ static int cna_handle_volume_usage_data (const host_config_t *host, /* {{{ */
 		} /* }}} end of 32-bit workaround */
 	} /* for (elem_volume) */
 
-	return (cna_submit_volume_usage_data (host->name, cfg_volume));
+	return (cna_submit_volume_usage_data (host->name, cfg_volume, host->interval));
 } /* }}} int cna_handle_volume_usage_data */
 
 static int cna_setup_volume_usage (cfg_volume_usage_t *cvu) /* {{{ */
@@ -1669,7 +1694,7 @@ static int cna_query_volume_usage (host_config_t *host) /* {{{ */
 {
 	na_elem_t *data;
 	int status;
-	time_t now;
+	cdtime_t now;
 
 	if (host == NULL)
 		return (EINVAL);
@@ -1679,7 +1704,7 @@ static int cna_query_volume_usage (host_config_t *host) /* {{{ */
 	if (host->cfg_volume_usage == NULL)
 		return (0);
 
-	now = time (NULL);
+	now = cdtime ();
 	if ((host->cfg_volume_usage->interval.interval + host->cfg_volume_usage->interval.last_read) > now)
 		return (0);
 
@@ -1691,8 +1716,8 @@ static int cna_query_volume_usage (host_config_t *host) /* {{{ */
 	data = na_server_invoke_elem(host->srv, host->cfg_volume_usage->query);
 	if (na_results_status (data) != NA_OK)
 	{
-		ERROR ("netapp plugin: cna_query_volume_usage: na_server_invoke_elem failed: %s",
-				na_results_reason (data));
+		ERROR ("netapp plugin: cna_query_volume_usage: na_server_invoke_elem failed for host %s: %s",
+				host->name, na_results_reason (data));
 		na_elem_free (data);
 		return (-1);
 	}
@@ -1708,27 +1733,28 @@ static int cna_query_volume_usage (host_config_t *host) /* {{{ */
 
 /* Data corresponding to <System /> */
 static int cna_handle_system_data (const char *hostname, /* {{{ */
-		cfg_system_t *cfg_system, na_elem_t *data)
+		cfg_system_t *cfg_system, na_elem_t *data, int interval)
 {
 	na_elem_t *instances;
 	na_elem_t *counter;
 	na_elem_iter_t counter_iter;
 
-	counter_t disk_read = 0, disk_written = 0;
-	counter_t net_recv = 0, net_sent = 0;
-	counter_t cpu_busy = 0, cpu_total = 0;
+	derive_t disk_read = 0, disk_written = 0;
+	derive_t net_recv = 0, net_sent = 0;
+	derive_t cpu_busy = 0, cpu_total = 0;
 	uint32_t counter_flags = 0;
 
 	const char *instance;
-	time_t timestamp;
+	cdtime_t timestamp;
 	
-	timestamp = (time_t) na_child_get_uint64 (data, "timestamp", 0);
+	timestamp = cna_child_get_cdtime (data);
 
 	instances = na_elem_child(na_elem_child (data, "instances"), "instance-data");
 	if (instances == NULL)
 	{
 		ERROR ("netapp plugin: cna_handle_system_data: "
-				"na_elem_child (\"instances\") failed.");
+				"na_elem_child (\"instances\") failed "
+				"for host %s.", hostname);
 		return (-1);
 	}
 
@@ -1736,7 +1762,8 @@ static int cna_handle_system_data (const char *hostname, /* {{{ */
 	if (instance == NULL)
 	{
 		ERROR ("netapp plugin: cna_handle_system_data: "
-				"na_child_get_string (\"name\") failed.");
+				"na_child_get_string (\"name\") failed "
+				"for host %s.", hostname);
 		return (-1);
 	}
 
@@ -1757,48 +1784,48 @@ static int cna_handle_system_data (const char *hostname, /* {{{ */
 			continue;
 
 		if (!strcmp(name, "disk_data_read")) {
-			disk_read = (counter_t) (value * 1024);
+			disk_read = (derive_t) (value * 1024);
 			counter_flags |= 0x01;
 		} else if (!strcmp(name, "disk_data_written")) {
-			disk_written = (counter_t) (value * 1024);
+			disk_written = (derive_t) (value * 1024);
 			counter_flags |= 0x02;
 		} else if (!strcmp(name, "net_data_recv")) {
-			net_recv = (counter_t) (value * 1024);
+			net_recv = (derive_t) (value * 1024);
 			counter_flags |= 0x04;
 		} else if (!strcmp(name, "net_data_sent")) {
-			net_sent = (counter_t) (value * 1024);
+			net_sent = (derive_t) (value * 1024);
 			counter_flags |= 0x08;
 		} else if (!strcmp(name, "cpu_busy")) {
-			cpu_busy = (counter_t) value;
+			cpu_busy = (derive_t) value;
 			counter_flags |= 0x10;
 		} else if (!strcmp(name, "cpu_elapsed_time")) {
-			cpu_total = (counter_t) value;
+			cpu_total = (derive_t) value;
 			counter_flags |= 0x20;
 		} else if ((cfg_system->flags & CFG_SYSTEM_OPS)
 				&& (value > 0) && (strlen(name) > 4)
 				&& (!strcmp(name + strlen(name) - 4, "_ops"))) {
-			submit_counter (hostname, instance, "disk_ops_complex", name,
-					(counter_t) value, timestamp);
+			submit_derive (hostname, instance, "disk_ops_complex", name,
+					(derive_t) value, timestamp, interval);
 		}
 	} /* for (counter) */
 
 	if ((cfg_system->flags & CFG_SYSTEM_DISK)
 			&& (HAS_ALL_FLAGS (counter_flags, 0x01 | 0x02)))
-		submit_two_counters (hostname, instance, "disk_octets", NULL,
-				disk_read, disk_written, timestamp);
+		submit_two_derive (hostname, instance, "disk_octets", NULL,
+				disk_read, disk_written, timestamp, interval);
 				
 	if ((cfg_system->flags & CFG_SYSTEM_NET)
 			&& (HAS_ALL_FLAGS (counter_flags, 0x04 | 0x08)))
-		submit_two_counters (hostname, instance, "if_octets", NULL,
-				net_recv, net_sent, timestamp);
+		submit_two_derive (hostname, instance, "if_octets", NULL,
+				net_recv, net_sent, timestamp, interval);
 
 	if ((cfg_system->flags & CFG_SYSTEM_CPU)
 			&& (HAS_ALL_FLAGS (counter_flags, 0x10 | 0x20)))
 	{
-		submit_counter (hostname, instance, "cpu", "system",
-				cpu_busy, timestamp);
-		submit_counter (hostname, instance, "cpu", "idle",
-				cpu_total - cpu_busy, timestamp);
+		submit_derive (hostname, instance, "cpu", "system",
+				cpu_busy, timestamp, interval);
+		submit_derive (hostname, instance, "cpu", "idle",
+				cpu_total - cpu_busy, timestamp, interval);
 	}
 
 	return (0);
@@ -1827,7 +1854,7 @@ static int cna_query_system (host_config_t *host) /* {{{ */
 {
 	na_elem_t *data;
 	int status;
-	time_t now;
+	cdtime_t now;
 
 	if (host == NULL)
 		return (EINVAL);
@@ -1836,7 +1863,7 @@ static int cna_query_system (host_config_t *host) /* {{{ */
 	if (host->cfg_system == NULL)
 		return (0);
 
-	now = time (NULL);
+	now = cdtime ();
 	if ((host->cfg_system->interval.interval + host->cfg_system->interval.last_read) > now)
 		return (0);
 
@@ -1848,13 +1875,13 @@ static int cna_query_system (host_config_t *host) /* {{{ */
 	data = na_server_invoke_elem(host->srv, host->cfg_system->query);
 	if (na_results_status (data) != NA_OK)
 	{
-		ERROR ("netapp plugin: cna_query_system: na_server_invoke_elem failed: %s",
-				na_results_reason (data));
+		ERROR ("netapp plugin: cna_query_system: na_server_invoke_elem failed for host %s: %s",
+				host->name, na_results_reason (data));
 		na_elem_free (data);
 		return (-1);
 	}
 
-	status = cna_handle_system_data (host->name, host->cfg_system, data);
+	status = cna_handle_system_data (host->name, host->cfg_system, data, host->interval);
 
 	if (status == 0)
 		host->cfg_system->interval.last_read = now;
@@ -1893,23 +1920,12 @@ static int cna_config_bool_to_flag (const oconfig_item_t *ci, /* {{{ */
 static int cna_config_get_interval (const oconfig_item_t *ci, /* {{{ */
 		cna_interval_t *out_interval)
 {
-	time_t tmp;
+	cdtime_t tmp = 0;
+	int status;
 
-	if ((ci == NULL) || (out_interval == NULL))
-		return (EINVAL);
-
-	if ((ci->values_num != 1) || (ci->values[0].type != OCONFIG_TYPE_NUMBER))
-	{
-		WARNING ("netapp plugin: The `Interval' option needs exactly one numeric argument.");
-		return (-1);
-	}
-
-	tmp = (time_t) (ci->values[0].value.number + .5);
-	if (tmp < 1)
-	{
-		WARNING ("netapp plugin: The `Interval' option needs a positive integer argument.");
-		return (-1);
-	}
+	status = cf_util_get_cdtime (ci, &tmp);
+	if (status != 0)
+		return (status);
 
 	out_interval->interval = tmp;
 	out_interval->last_read = 0;
@@ -2409,11 +2425,7 @@ static host_config_t *cna_config_host (const oconfig_item_t *ci) /* {{{ */
 		} else if (!strcasecmp(item->key, "Password")) {
 			status = cf_util_get_string (item, &host->password);
 		} else if (!strcasecmp(item->key, "Interval")) {
-			if (item->values_num != 1 || item->values[0].type != OCONFIG_TYPE_NUMBER || item->values[0].value.number != (int) item->values[0].value.number || item->values[0].value.number < 2) {
-				WARNING("netapp plugin: \"Interval\" of host %s needs exactly one integer argument.", ci->values[0].value.string);
-				continue;
-			}
-			host->interval = item->values[0].value.number;
+			status = cf_util_get_cdtime (item, &host->interval);
 		} else if (!strcasecmp(item->key, "WAFL")) {
 			cna_config_wafl(host, item);
 		} else if (!strcasecmp(item->key, "Disks")) {
@@ -2544,14 +2556,13 @@ static int cna_config (oconfig_item_t *ci) { /* {{{ */
 
 			ssnprintf (cb_name, sizeof (cb_name), "netapp-%s", host->name);
 
-			memset (&interval, 0, sizeof (interval));
-			interval.tv_sec = host->interval;
+			CDTIME_T_TO_TIMESPEC (host->interval, &interval);
 
 			memset (&ud, 0, sizeof (ud));
 			ud.data = host;
 			ud.free_func = (void (*) (void *)) free_host_config;
 
-			plugin_register_complex_read (cb_name,
+			plugin_register_complex_read (/* group = */ NULL, cb_name,
 					/* callback  = */ cna_read, 
 					/* interval  = */ (host->interval > 0) ? &interval : NULL,
 					/* user data = */ &ud);

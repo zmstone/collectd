@@ -1,6 +1,6 @@
 /**
  * collectd - src/apache.c
- * Copyright (C) 2006-2009  Florian octo Forster
+ * Copyright (C) 2006-2010  Florian octo Forster
  * Copyright (C) 2007       Florent EppO Monbillard
  * Copyright (C) 2009       Amit Gupta
  *
@@ -144,6 +144,8 @@ static size_t apache_header_callback (void *buf, size_t size, size_t nmemb,
 		st->server_type = APACHE;
 	else if (strstr (buf, "lighttpd") != NULL)
 		st->server_type = LIGHTTPD;
+	else if (strstr (buf, "IBM_HTTP_Server") != NULL)
+		st->server_type = APACHE;
 	else
 	{
 		const char *hdr = buf;
@@ -202,7 +204,7 @@ static int config_set_boolean (int *ret_boolean, /* {{{ */
 		return (-1);
 	}
 
-	if (ci->values[0].type != OCONFIG_TYPE_BOOLEAN)
+	if (ci->values[0].type == OCONFIG_TYPE_BOOLEAN)
 	{
 		if (ci->values[0].value.boolean)
 			*ret_boolean = 1;
@@ -313,7 +315,8 @@ static int config_add (oconfig_item_t *ci)
 				(st->host != NULL) ? st->host : hostname_g,
 				(st->name != NULL) ? st->name : "default"),
 
-		status = plugin_register_complex_read (callback_name,
+		status = plugin_register_complex_read (/* group = */ NULL,
+				/* name      = */ callback_name,
 				/* callback  = */ apache_read_host,
 				/* interval  = */ NULL,
 				/* user_data = */ &ud);
@@ -332,57 +335,22 @@ static int config (oconfig_item_t *ci)
 {
 	int status = 0;
 	int i;
-	oconfig_item_t *lci = NULL; /* legacy config */
 
 	for (i = 0; i < ci->children_num; i++)
 	{
 		oconfig_item_t *child = ci->children + i;
 
-		if (strcasecmp ("Instance", child->key) == 0 && child->children_num > 0)
+		if (strcasecmp ("Instance", child->key) == 0)
 			config_add (child);
 		else
-		{
-			/* legacy mode - convert to <Instance ...> config */
-			if (lci == NULL)
-			{
-				lci = malloc (sizeof(*lci));
-				if (lci == NULL)
-				{
-					ERROR ("apache plugin: malloc failed.");
-					return (-1);
-				}
-				memset (lci, '\0', sizeof (*lci));
-			}
-
-			lci->children_num++;
-			lci->children =
-				realloc (lci->children,
-					 lci->children_num * sizeof (*child));
-			if (lci->children == NULL)
-			{
-				ERROR ("apache plugin: realloc failed.");
-				return (-1);
-			}
-			memcpy (&lci->children[lci->children_num-1], child, sizeof (*child));
-		}
+			WARNING ("apache plugin: The configuration option "
+					"\"%s\" is not allowed here. Did you "
+					"forget to add an <Instance /> block "
+					"around the configuration?",
+					child->key);
 	} /* for (ci->children) */
 
-	if (lci)
-	{
-		/* create a <Instance ""> entry */
-		lci->key = "Instance";
-		lci->values_num = 1;
-		lci->values = (oconfig_value_t *) malloc (lci->values_num * sizeof (oconfig_value_t));
-		lci->values[0].type = OCONFIG_TYPE_STRING;
-		lci->values[0].value.string = "";
-
-		status = config_add (lci);
-		sfree (lci->values);
-		sfree (lci->children);
-		sfree (lci);
-	}
-
-	return status;
+	return (status);
 } /* int config */
 
 /* initialize curl for each host */
@@ -405,6 +373,7 @@ static int init_host (apache_t *st) /* {{{ */
 		return (-1);
 	}
 
+	curl_easy_setopt (st->curl, CURLOPT_NOSIGNAL, 1);
 	curl_easy_setopt (st->curl, CURLOPT_WRITEFUNCTION, apache_curl_callback);
 	curl_easy_setopt (st->curl, CURLOPT_WRITEDATA, st);
 
@@ -419,6 +388,8 @@ static int init_host (apache_t *st) /* {{{ */
 			st->server_type = APACHE;
 		else if (strcasecmp(st->server, "lighttpd") == 0)
 			st->server_type = LIGHTTPD;
+		else if (strcasecmp(st->server, "ibm_http_server") == 0)
+			st->server_type = APACHE;
 		else
 			WARNING ("apache plugin: Unknown `Server' setting: %s",
 					st->server);
@@ -506,13 +477,13 @@ static void submit_value (const char *type, const char *type_instance,
 	plugin_dispatch_values (&vl);
 } /* void submit_value */
 
-static void submit_counter (const char *type, const char *type_instance,
-		counter_t c, apache_t *st)
+static void submit_derive (const char *type, const char *type_instance,
+		derive_t c, apache_t *st)
 {
 	value_t v;
-	v.counter = c;
+	v.derive = c;
 	submit_value (type, type_instance, v, st);
-} /* void submit_counter */
+} /* void submit_derive */
 
 static void submit_gauge (const char *type, const char *type_instance,
 		gauge_t g, apache_t *st)
@@ -674,19 +645,23 @@ static int apache_read_host (user_data_t *user_data) /* {{{ */
 		{
 			if ((strcmp (fields[0], "Total") == 0)
 					&& (strcmp (fields[1], "Accesses:") == 0))
-				submit_counter ("apache_requests", "",
+				submit_derive ("apache_requests", "",
 						atoll (fields[2]), st);
 			else if ((strcmp (fields[0], "Total") == 0)
 					&& (strcmp (fields[1], "kBytes:") == 0))
-				submit_counter ("apache_bytes", "",
+				submit_derive ("apache_bytes", "",
 						1024LL * atoll (fields[2]), st);
 		}
 		else if (fields_num == 2)
 		{
 			if (strcmp (fields[0], "Scoreboard:") == 0)
 				submit_scoreboard (fields[1], st);
-			else if (strcmp (fields[0], "BusyServers:") == 0)
+			else if ((strcmp (fields[0], "BusyServers:") == 0) /* Apache 1.* */
+					|| (strcmp (fields[0], "BusyWorkers:") == 0) /* Apache 2.* */)
 				submit_gauge ("apache_connections", NULL, atol (fields[1]), st);
+			else if ((strcmp (fields[0], "IdleServers:") == 0) /* Apache 1.x */
+					|| (strcmp (fields[0], "IdleWorkers:") == 0) /* Apache 2.x */)
+				submit_gauge ("apache_idle_workers", NULL, atol (fields[1]), st);
 		}
 	}
 

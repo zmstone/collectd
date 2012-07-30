@@ -2,6 +2,7 @@
  * collectd - src/memory.c
  * Copyright (C) 2005-2008  Florian octo Forster
  * Copyright (C) 2009       Simon Kuhnle
+ * Copyright (C) 2009       Manuel Sanmartin
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -19,6 +20,7 @@
  * Authors:
  *   Florian octo Forster <octo at verplant.org>
  *   Simon Kuhnle <simon at blarzwurst.de>
+ *   Manuel Sanmartin
  **/
 
 #include "collectd.h"
@@ -49,6 +51,11 @@
 # include <statgrab.h>
 #endif
 
+#if HAVE_PERFSTAT
+# include <sys/protosw.h>
+# include <libperfstat.h>
+#endif /* HAVE_PERFSTAT */
+
 /* vm_statistics_data_t */
 #if HAVE_HOST_STATISTICS
 static mach_port_t port_host;
@@ -75,7 +82,10 @@ static int pagesize;
 #elif HAVE_LIBSTATGRAB
 /* no global variables */
 /* endif HAVE_LIBSTATGRAB */
-
+#elif HAVE_PERFSTAT
+static int pagesize;
+static perfstat_memory_total_t pmemory;
+/* endif HAVE_PERFSTAT */
 #else
 # error "No applicable input method."
 #endif
@@ -116,8 +126,11 @@ static int memory_init (void)
 
 #elif HAVE_LIBSTATGRAB
 /* no init stuff */
-#endif /* HAVE_LIBSTATGRAB */
+/* #endif HAVE_LIBSTATGRAB */
 
+#elif HAVE_PERFSTAT
+	pagesize = getpagesize ();
+#endif /* HAVE_PERFSTAT */
 	return (0);
 } /* int memory_init */
 
@@ -145,10 +158,10 @@ static int memory_read (void)
 	vm_statistics_data_t   vm_data;
 	mach_msg_type_number_t vm_data_len;
 
-	long long wired;
-	long long active;
-	long long inactive;
-	long long free;
+	gauge_t wired;
+	gauge_t active;
+	gauge_t inactive;
+	gauge_t free;
 
 	if (!port_host || !pagesize)
 		return (-1);
@@ -182,10 +195,10 @@ static int memory_read (void)
 	 *   This memory is not being used.
 	 */
 
-	wired    = vm_data.wire_count     * pagesize;
-	active   = vm_data.active_count   * pagesize;
-	inactive = vm_data.inactive_count * pagesize;
-	free     = vm_data.free_count     * pagesize;
+	wired    = (gauge_t) (((uint64_t) vm_data.wire_count)     * ((uint64_t) pagesize));
+	active   = (gauge_t) (((uint64_t) vm_data.active_count)   * ((uint64_t) pagesize));
+	inactive = (gauge_t) (((uint64_t) vm_data.inactive_count) * ((uint64_t) pagesize));
+	free     = (gauge_t) (((uint64_t) vm_data.free_count)     * ((uint64_t) pagesize));
 
 	memory_submit ("wired",    wired);
 	memory_submit ("active",   active);
@@ -250,7 +263,7 @@ static int memory_read (void)
 #elif KERNEL_LINUX
 	FILE *fh;
 	char buffer[1024];
-	
+
 	char *fields[8];
 	int numfields;
 
@@ -308,9 +321,17 @@ static int memory_read (void)
 /* #endif KERNEL_LINUX */
 
 #elif HAVE_LIBKSTAT
+        /* Most of the additions here were taken as-is from the k9toolkit from
+         * Brendan Gregg and are subject to change I guess */
 	long long mem_used;
 	long long mem_free;
 	long long mem_lock;
+	long long mem_kern;
+	long long mem_unus;
+
+	long long pp_kernel;
+	long long physmem;
+	long long availrmem;
 
 	if (ksp == NULL)
 		return (-1);
@@ -318,20 +339,61 @@ static int memory_read (void)
 	mem_used = get_kstat_value (ksp, "pagestotal");
 	mem_free = get_kstat_value (ksp, "pagesfree");
 	mem_lock = get_kstat_value (ksp, "pageslocked");
+	mem_kern = 0;
+	mem_unus = 0;
+
+	pp_kernel = get_kstat_value (ksp, "pp_kernel");
+	physmem = get_kstat_value (ksp, "physmem");
+	availrmem = get_kstat_value (ksp, "availrmem");
 
 	if ((mem_used < 0LL) || (mem_free < 0LL) || (mem_lock < 0LL))
+	{
+		WARNING ("memory plugin: one of used, free or locked is negative.");
 		return (-1);
-	if (mem_used < (mem_free + mem_lock))
-		return (-1);
+	}
 
-	mem_used -= mem_free + mem_lock;
+	mem_unus = physmem - mem_used;
+
+	if (mem_used < (mem_free + mem_lock))
+	{
+		/* source: http://wesunsolve.net/bugid/id/4909199
+		 * this seems to happen when swap space is small, e.g. 2G on a 32G system
+		 * we will make some assumptions here
+		 * educated solaris internals help welcome here */
+		DEBUG ("memory plugin: pages total is smaller than \"free\" "
+				"+ \"locked\". This is probably due to small "
+				"swap space");
+		mem_free = availrmem;
+		mem_used = 0;
+	}
+	else
+	{
+		mem_used -= mem_free + mem_lock;
+	}
+
+	/* mem_kern is accounted for in mem_lock */
+	if ( pp_kernel < mem_lock )
+	{
+		mem_kern = pp_kernel;
+		mem_lock -= pp_kernel;
+	}
+	else
+	{
+		mem_kern = mem_lock;
+		mem_lock = 0;
+	}
+
 	mem_used *= pagesize; /* If this overflows you have some serious */
 	mem_free *= pagesize; /* memory.. Why not call me up and give me */
 	mem_lock *= pagesize; /* some? ;) */
+	mem_kern *= pagesize; /* it's 2011 RAM is cheap */
+	mem_unus *= pagesize;
 
 	memory_submit ("used",   mem_used);
 	memory_submit ("free",   mem_free);
 	memory_submit ("locked", mem_lock);
+	memory_submit ("kernel", mem_kern);
+	memory_submit ("unusable", mem_unus);
 /* #endif HAVE_LIBKSTAT */
 
 #elif HAVE_SYSCTL
@@ -364,7 +426,22 @@ static int memory_read (void)
 		memory_submit ("cached", ios->cache);
 		memory_submit ("free",   ios->free);
 	}
-#endif /* HAVE_LIBSTATGRAB */
+/* #endif HAVE_LIBSTATGRAB */
+
+#elif HAVE_PERFSTAT
+	if (perfstat_memory_total(NULL, &pmemory, sizeof(perfstat_memory_total_t), 1) < 0)
+	{
+		char errbuf[1024];
+		WARNING ("memory plugin: perfstat_memory_total failed: %s",
+			sstrerror (errno, errbuf, sizeof (errbuf)));
+		return (-1);
+	}
+	memory_submit ("used",   pmemory.real_inuse * pagesize);
+	memory_submit ("free",   pmemory.real_free * pagesize);
+	memory_submit ("cached", pmemory.numperm * pagesize);
+	memory_submit ("system", pmemory.real_system * pagesize);
+	memory_submit ("user",   pmemory.real_process * pagesize);
+#endif /* HAVE_PERFSTAT */
 
 	return (0);
 }

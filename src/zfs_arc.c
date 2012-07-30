@@ -1,6 +1,7 @@
 /**
  * collectd - src/zfs_arc.c
  * Copyright (C) 2009  Anthony Dewhurst
+ * Copyright (C) 2012  Aurelien Rougemont
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -17,6 +18,7 @@
  *
  * Authors:
  *   Anthony Dewhurst <dewhurst at gmail>
+ *   Aurelien Rougemont <beorn at gandi.net>
  **/
 
 #include "collectd.h"
@@ -46,54 +48,65 @@ static void za_submit (const char* type, const char* type_instance, value_t* val
 
 static void za_submit_gauge (const char* type, const char* type_instance, gauge_t value)
 {
-	value_t values[1];
+	value_t vv;
 
-	values[0].gauge = value;
-
-	za_submit (type, type_instance, values, STATIC_ARRAY_SIZE(values));
+	vv.gauge = value;
+	za_submit (type, type_instance, &vv, 1);
 }
 
-static void za_submit_size (gauge_t size, gauge_t size_target, gauge_t limit_min, gauge_t limit_max)
+static int za_read_derive (kstat_t *ksp, const char *kstat_value,
+    const char *type, const char *type_instance)
 {
-	value_t values[4];
+  long long tmp;
+  value_t v;
 
-	values[0].gauge = size;
-	values[1].gauge = size_target;
-	values[2].gauge = limit_min;
-	values[3].gauge = limit_max;
+  tmp = get_kstat_value (ksp, kstat_value);
+  if (tmp == -1LL)
+  {
+    ERROR ("zfs_arc plugin: Reading kstat value \"%s\" failed.", kstat_value);
+    return (-1);
+  }
 
-	za_submit ("arc_size", "", values, STATIC_ARRAY_SIZE(values));
+  v.derive = (derive_t) tmp;
+  za_submit (type, type_instance, /* values = */ &v, /* values_num = */ 1);
 }
 
-static void za_submit_bytes (counter_t read, counter_t write)
+static int za_read_gauge (kstat_t *ksp, const char *kstat_value,
+    const char *type, const char *type_instance)
 {
-	value_t values[2];
+  long long tmp;
+  value_t v;
 
-	values[0].counter = read;
-	values[1].counter = write;
+  tmp = get_kstat_value (ksp, kstat_value);
+  if (tmp == -1LL)
+  {
+    ERROR ("zfs_arc plugin: Reading kstat value \"%s\" failed.", kstat_value);
+    return (-1);
+  }
 
-	za_submit ("arc_l2_bytes", "", values, STATIC_ARRAY_SIZE(values));
+  v.gauge = (gauge_t) tmp;
+  za_submit (type, type_instance, /* values = */ &v, /* values_num = */ 1);
 }
 
-static void za_submit_counts (char *type_instance, counter_t demand_data, counter_t demand_metadata,
-	counter_t prefetch_data, counter_t prefetch_metadata)
+static void za_submit_ratio (const char* type_instance, gauge_t hits, gauge_t misses)
 {
-	value_t values[4];
+	gauge_t ratio = NAN;
 
-	values[0].counter = demand_data;
-	values[1].counter = demand_metadata;
-	values[2].counter = prefetch_data;
-	values[3].counter = prefetch_metadata;
+	if (!isfinite (hits) || (hits < 0.0))
+		hits = 0.0;
+	if (!isfinite (misses) || (misses < 0.0))
+		misses = 0.0;
 
-	za_submit ("arc_counts", type_instance, values, STATIC_ARRAY_SIZE(values));
+	if ((hits != 0.0) || (misses != 0.0))
+		ratio = hits / (hits + misses);
+
+	za_submit_gauge ("cache_ratio", type_instance, ratio);
 }
 
 static int za_read (void)
 {
-	gauge_t   arcsize, targetsize, minlimit, maxlimit, hits, misses, l2_size, l2_hits, l2_misses;
-	counter_t demand_data_hits, demand_metadata_hits, prefetch_data_hits, prefetch_metadata_hits;
-	counter_t demand_data_misses, demand_metadata_misses, prefetch_data_misses, prefetch_metadata_misses;
-	counter_t l2_read_bytes, l2_write_bytes;
+	gauge_t  arc_hits, arc_misses, l2_hits, l2_misses;
+	value_t  l2_io[2];
 
 	get_kstat (&ksp, "zfs", 0, "arcstats");
 	if (ksp == NULL)
@@ -102,46 +115,51 @@ static int za_read (void)
 		return (-1);
 	}
 
-	arcsize    = get_kstat_value(ksp, "size");
-	targetsize = get_kstat_value(ksp, "c");
-	minlimit   = get_kstat_value(ksp, "c_min");
-	maxlimit   = get_kstat_value(ksp, "c_max");
+	/* Sizes */
+	za_read_gauge (ksp, "size",    "cache_size", "arc");
+	za_read_gauge (ksp, "l2_size", "cache_size", "L2");
 
-	demand_data_hits       = get_kstat_value(ksp, "demand_data_hits");
-	demand_metadata_hits   = get_kstat_value(ksp, "demand_metadata_hits");
-	prefetch_data_hits     = get_kstat_value(ksp, "prefetch_data_hits");
-	prefetch_metadata_hits = get_kstat_value(ksp, "prefetch_metadata_hits");
+        /* Operations */
+	za_read_derive (ksp, "allocated","cache_operation", "allocated");
+	za_read_derive (ksp, "deleted",  "cache_operation", "deleted");
+	za_read_derive (ksp, "stolen",   "cache_operation", "stolen");
 
-	demand_data_misses       = get_kstat_value(ksp, "demand_data_misses");
-	demand_metadata_misses   = get_kstat_value(ksp, "demand_metadata_misses");
-	prefetch_data_misses     = get_kstat_value(ksp, "prefetch_data_misses");
-	prefetch_metadata_misses = get_kstat_value(ksp, "prefetch_metadata_misses");
+        /* Issue indicators */
+        za_read_derive (ksp, "mutex_miss", "mutex_operation", "miss");
+	za_read_derive (ksp, "hash_collisions", "hash_collisions", "");
+	
+        /* Evictions */
+	za_read_derive (ksp, "evict_l2_cached",     "cache_eviction", "cached");
+	za_read_derive (ksp, "evict_l2_eligible",   "cache_eviction", "eligible");
+	za_read_derive (ksp, "evict_l2_ineligible", "cache_eviction", "ineligible");
 
-	hits   = get_kstat_value(ksp, "hits");
-	misses = get_kstat_value(ksp, "misses");
+	/* Hits / misses */
+	za_read_derive (ksp, "demand_data_hits",         "cache_result", "demand_data-hit");
+	za_read_derive (ksp, "demand_metadata_hits",     "cache_result", "demand_metadata-hit");
+	za_read_derive (ksp, "prefetch_data_hits",       "cache_result", "prefetch_data-hit");
+	za_read_derive (ksp, "prefetch_metadata_hits",   "cache_result", "prefetch_metadata-hit");
+	za_read_derive (ksp, "demand_data_misses",       "cache_result", "demand_data-miss");
+	za_read_derive (ksp, "demand_metadata_misses",   "cache_result", "demand_metadata-miss");
+	za_read_derive (ksp, "prefetch_data_misses",     "cache_result", "prefetch_data-miss");
+	za_read_derive (ksp, "prefetch_metadata_misses", "cache_result", "prefetch_metadata-miss");
 
-	l2_size        = get_kstat_value(ksp, "l2_size");
-	l2_read_bytes  = get_kstat_value(ksp, "l2_read_bytes");
-	l2_write_bytes = get_kstat_value(ksp, "l2_write_bytes");
-	l2_hits        = get_kstat_value(ksp, "l2_hits");
-	l2_misses      = get_kstat_value(ksp, "l2_misses");
+	/* Ratios */
+	arc_hits   = (gauge_t) get_kstat_value(ksp, "hits");
+	arc_misses = (gauge_t) get_kstat_value(ksp, "misses");
+	l2_hits    = (gauge_t) get_kstat_value(ksp, "l2_hits");
+	l2_misses  = (gauge_t) get_kstat_value(ksp, "l2_misses");
 
+	za_submit_ratio ("arc", arc_hits, arc_misses);
+	za_submit_ratio ("L2", l2_hits, l2_misses);
 
-	za_submit_size (arcsize, targetsize, minlimit, maxlimit);
-	za_submit_gauge ("arc_l2_size", "", l2_size);
+	/* I/O */
+	l2_io[0].derive = get_kstat_value(ksp, "l2_read_bytes");
+	l2_io[1].derive = get_kstat_value(ksp, "l2_write_bytes");
 
-	za_submit_counts ("hits",   demand_data_hits,     demand_metadata_hits,
-	                            prefetch_data_hits,   prefetch_metadata_hits);
-	za_submit_counts ("misses", demand_data_misses,   demand_metadata_misses,
-	                            prefetch_data_misses, prefetch_metadata_misses);
-
-	za_submit_gauge ("arc_ratio", "L1", hits / (hits + misses));
-	za_submit_gauge ("arc_ratio", "L2", l2_hits / (l2_hits + l2_misses));
-
-	za_submit_bytes (l2_read_bytes, l2_write_bytes);
+	za_submit ("io_octets", "L2", l2_io, /* num values = */ 2);
 
 	return (0);
-}
+} /* int za_read */
 
 static int za_init (void) /* {{{ */
 {

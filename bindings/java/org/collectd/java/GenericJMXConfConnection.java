@@ -1,6 +1,6 @@
 /*
  * collectd/java - org/collectd/java/GenericJMXConfConnection.java
- * Copyright (C) 2009  Florian octo Forster
+ * Copyright (C) 2009,2010  Florian octo Forster
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -45,6 +45,7 @@ class GenericJMXConfConnection
   private String _username = null;
   private String _password = null;
   private String _host = null;
+  private String _instance_prefix = null;
   private String _service_url = null;
   private MBeanServerConnection _jmx_connection = null;
   private List<GenericJMXConfMBean> _mbeans = null;
@@ -162,6 +163,12 @@ private void connect () /* {{{ */
         if (tmp != null)
           this._service_url = tmp;
       }
+      else if (child.getKey ().equalsIgnoreCase ("InstancePrefix"))
+      {
+        String tmp = getConfigString (child);
+        if (tmp != null)
+          this._instance_prefix = tmp;
+      }
       else if (child.getKey ().equalsIgnoreCase ("Collect"))
       {
         String tmp = getConfigString (child);
@@ -208,7 +215,17 @@ private void connect () /* {{{ */
     pd.setPlugin ("GenericJMX");
 
     for (int i = 0; i < this._mbeans.size (); i++)
-      this._mbeans.get (i).query (this._jmx_connection, pd);
+    {
+      int status;
+
+      status = this._mbeans.get (i).query (this._jmx_connection, pd,
+          this._instance_prefix);
+      if (status != 0)
+      {
+        this._jmx_connection = null;
+        return;
+      }
+    } /* for */
   } /* }}} void query */
 
   public String toString ()

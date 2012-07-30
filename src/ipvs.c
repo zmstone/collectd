@@ -45,7 +45,9 @@
 #endif /* HAVE_NETINET_IN_H */
 
 /* this can probably only be found in the kernel sources */
-#if HAVE_NET_IP_VS_H
+#if HAVE_LINUX_IP_VS_H
+# include <linux/ip_vs.h>
+#elif HAVE_NET_IP_VS_H
 # include <net/ip_vs.h>
 #elif HAVE_IP_VS_H
 # include <ip_vs.h>
@@ -225,17 +227,15 @@ static int get_ti (struct ip_vs_dest_entry *de, char *ti, size_t size)
 	return 0;
 } /* get_ti */
 
-static void cipvs_submit_connections (char *pi, char *ti, counter_t value)
+static void cipvs_submit_connections (char *pi, char *ti, derive_t value)
 {
 	value_t values[1];
 	value_list_t vl = VALUE_LIST_INIT;
 
-	values[0].counter = value;
+	values[0].derive = value;
 
 	vl.values     = values;
 	vl.values_len = 1;
-
-	vl.interval = interval_g;
 
 	sstrncpy (vl.host, hostname_g, sizeof (vl.host));
 	sstrncpy (vl.plugin, "ipvs", sizeof (vl.plugin));
@@ -249,18 +249,16 @@ static void cipvs_submit_connections (char *pi, char *ti, counter_t value)
 } /* cipvs_submit_connections */
 
 static void cipvs_submit_if (char *pi, char *t, char *ti,
-		counter_t rx, counter_t tx)
+		derive_t rx, derive_t tx)
 {
 	value_t values[2];
 	value_list_t vl = VALUE_LIST_INIT;
 
-	values[0].counter = rx;
-	values[1].counter = tx;
+	values[0].derive = rx;
+	values[1].derive = tx;
 
 	vl.values     = values;
 	vl.values_len = 2;
-
-	vl.interval = interval_g;
 
 	sstrncpy (vl.host, hostname_g, sizeof (vl.host));
 	sstrncpy (vl.plugin, "ipvs", sizeof (vl.plugin));
