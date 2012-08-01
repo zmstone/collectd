@@ -29,7 +29,7 @@ register_read (Callback) ->
 	call_cnode (register_read, Callback).
 
 call_cnode(Func, Args) ->
-	{any, 'collectd@leeloo.lan.home.verplant.org'} ! {Func, Args},
+	{any, 'collectd@zmdt'} ! {Func, Args},
 	receive
 		{ error, Message } ->
 			io:format ("Function ~w failed: ~s~n", [Func, Message]),

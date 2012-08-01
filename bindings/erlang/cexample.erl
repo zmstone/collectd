@@ -23,13 +23,13 @@
 -include("collectd.hrl").
 
 dispatch_reductions ({Total, _}) ->
-	collectd:dispatch_values (#value_list{host="localhost", plugin="erlang",
-			type="counter", type_instance="reductions",
+	collectd:dispatch_values (#value_list{host="zmdt", plugin="erlang",
+			plugin_instance="example",type="gauge", type_instance="reductions",
 			values=[Total]}).
 
 dispatch_memory ({Type, Size}) ->
-	collectd:dispatch_values (#value_list{host="localhost", plugin="erlang",
-			type="memory", type_instance=atom_to_list (Type),
+  collectd:dispatch_values (#value_list{host="zmdt", plugin="erlang",
+      type="memory", type_instance=atom_to_list (Type),
 			values=[Size]}).
 
 my_read() ->

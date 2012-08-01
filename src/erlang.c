@@ -131,7 +131,7 @@ static int send_error (int fd, ETERM *to, const char *message) /* {{{ */
 	return (status);
 } /* }}} int send_error */
 
-static int eterm_to_uint64_t(const ETERM *term, uint64_t *ret_time) /* {{{ */
+static int eterm_to_time_t(const ETERM *term, time_t *ret_time) /* {{{ */
 {
 	if ((term == NULL) || (ret_time == NULL))
 		return (EINVAL);
@@ -148,51 +148,37 @@ static int eterm_to_uint64_t(const ETERM *term, uint64_t *ret_time) /* {{{ */
 	switch (ERL_TYPE (term))
 	{
 		case ERL_INTEGER:
-			*ret_time = (uint64_t) ERL_INT_VALUE (term);
+			*ret_time = (time_t)ERL_INT_VALUE (term);
 			break;
 
 		case ERL_U_INTEGER:
-			*ret_time = (uint64_t) ERL_INT_UVALUE (term);
-			break;
-
-		case ERL_ATOM:
-			if ((strcmp ("now", ERL_ATOM_PTR (term)) == 0)
-					|| (strcmp ("undefined", ERL_ATOM_PTR (term)) == 0))
-			{
-				*ret_time = time (NULL);
-			}
-			else
-			{
-				ERROR ("erlang plugin: Invalid atom for time: %s.",
-						ERL_ATOM_PTR (term));
-				return (ENOTSUP);
-			}
+			*ret_time = (time_t)ERL_INT_UVALUE (term);
 			break;
 
 		case ERL_FLOAT:
-			*ret_time = (uint64_t) (ERL_FLOAT_VALUE (term) + .5);
+			*ret_time = (time_t)(ERL_FLOAT_VALUE (term) + .5);
 			break;
 
 #ifdef ERL_LONGLONG
 		case ERL_LONGLONG:
-			*ret_time = (uint64_t) ERL_LL_VALUE (term);
+			*ret_time = (time_t)ERL_LL_VALUE (term);
 			break;
 #endif /* ERL_LONGLONG */
 
 #ifdef ERL_U_LONGLONG
 		case ERL_U_LONGLONG:
-			*ret_time = (uint64_t) ERL_LL_UVALUE (term);
+			*ret_time = (time_t)ERL_LL_UVALUE (term);
 			break;
 #endif /* ERL_U_LONGLONG */
 
 		default:
 			ERROR ("erlang plugin: Don't know how to cast "
-					"erlang type %#x to uint64_t.", (unsigned int) ERL_TYPE (term));
+					"erlang type %#x to time_t.", ERL_TYPE (term));
 			return (ENOTSUP);
 	} /* switch (ERL_TYPE (term)) */
 
 	return (0);
-} /* }}} int eterm_to_uint64_t*/
+} /* }}} int eterm_to_time_t*/
 
 static int eterm_to_string (const ETERM *term, char *buffer, size_t buffer_size) /* {{{ */
 {
@@ -311,148 +297,175 @@ static int eterm_to_value (const ETERM *term, int ds_type, /* {{{ */
 	return (0);
 } /* }}} int eterm_to_value */
 
+static int eterm_list_len(const ETERM *term) /* {{{ */
+{
+	int len = 0;
+	while(!ERL_IS_EMPTY_LIST(term)){
+		term = ERL_CONS_TAIL(term);
+		len ++;
+	}
+	return len;
+}/* }}} int eterm_list_check */
+
 static int eterm_to_values (const ETERM *term, const data_set_t *ds, /* {{{ */
 		value_list_t *vl)
 {
 	int ds_index = 0;
-	int status;
+	int status = 0;
 
 	if ((term == NULL) || (ds == NULL) || (vl == NULL))
 		return (EINVAL);
 
-	if (!ERL_IS_LIST (term))
+	if (!ERL_IS_LIST (term)){
+		ERROR("erlang plugin: Bad eterm type, expecting list.");
 		return (-1);
-
-	free (vl->values);
-	vl->values = NULL;
-	vl->values_len = 0;
-
-	while (!ERL_IS_EMPTY_LIST (term))
-	{
-		const ETERM *eterm_value;
-		value_t *tmp;
-
-		if (ds_index >= ds->ds_num)
-		{
-			ds_index = ds->ds_num + 1;
-			status = 0;
-			break;
-		}
-
-		tmp = realloc (vl->values, sizeof (*tmp) * (vl->values_len + 1));
-		if (tmp == NULL)
-		{
-			status = ENOMEM;
-			break;
-		}
-		vl->values = tmp;
-
-		eterm_value = ERL_CONS_HEAD (term);
-		term = ERL_CONS_TAIL (term);
-
-		status = eterm_to_value (eterm_value, ds->ds[ds_index].type,
-				vl->values + vl->values_len);
-		if (status != 0)
-			break;
-
-		vl->values_len++;
-		ds_index++;
 	}
 
-	if ((status == 0) && (ds_index != ds->ds_num))
-		NOTICE ("erlang plugin: Incorrect number of values received for type %s: "
-				"Expected %i, got %i.", ds->type, ds->ds_num, ds_index);
+	/* free (vl->values); */ /* why free ? it's not enitialized */
+	vl->values_len = eterm_list_len(term);
+	if(0 == vl->values_len){
+		ERROR("erlang plugin: Bad eterm, expecting a non-empty list.");
+		return (-1);
+	}
+	if(ds->ds_num < vl->values_len){
+		ERROR("erlang plugin: Bad eterm, too many values for type %s, expecting %i.",
+			ds->type, ds->ds_num);
+		return (-1);
+	}
+	vl->values = malloc(vl->values_len * sizeof(value_t));
 
+	while(!ERL_IS_EMPTY_LIST (term)) {
+		const ETERM *eterm_value;
+		eterm_value = ERL_CONS_HEAD (term);
+		status = eterm_to_value (eterm_value, ds->ds[ds_index].type,
+				vl->values + ds_index);
+		if (status != 0) break;
+		term = ERL_CONS_TAIL (term);
+		ds_index++;
+	}
 	if ((status != 0) || (ds_index != ds->ds_num))
 	{
+		ERROR("erlang plugin: failed to decode value list.");
 		free (vl->values);
 		vl->values = NULL;
 		vl->values_len = 0;
-		return (status);
 	}
 
-	return (0);
+	return (status);
 } /* }}} int eterm_to_values */
+
+static int tuple_elem_to_name_str(const ETERM * term, int index, char * name) /* {{{ */
+{
+	ETERM * tmp;
+	int status;
+	tmp = erl_element(index, term);
+	status = eterm_to_string(tmp, name, DATA_MAX_NAME_LEN);
+	erl_free_term(tmp);
+  return status;
+} /* }}} tuple_elem_to_name_str */
 
 static int eterm_to_value_list (const ETERM *term, value_list_t *vl) /* {{{ */
 {
 	ETERM *tmp;
 	int status;
 	const data_set_t *ds;
-
-	if ((term == NULL) || (vl == NULL))
-		return (EINVAL);
-
-	if (!ERL_IS_TUPLE (term) || (ERL_TUPLE_SIZE (term) != 9))
-		return (EINVAL);
+	if ((term == NULL) || (vl == NULL)) return (EINVAL);
+	if (!ERL_IS_TUPLE (term) || (ERL_TUPLE_SIZE (term) != 8)) return (EINVAL);
 
 	tmp = erl_element (1, term);
-	if (!ERL_IS_ATOM (tmp)
-			|| (strcmp ("value_list", ERL_ATOM_PTR (tmp)) != 0))
-	{
+	if (!ERL_IS_ATOM (tmp) || (strcmp ("value_list", ERL_ATOM_PTR (tmp)) != 0)) {
 		erl_free_term (tmp);
 		return (-1);
 	}
 	erl_free_term (tmp);
 
 	status = 0;
-	do
-	{
-#define TUPLE_ELEM_TO_CHAR_ARRAY(idx,buf) \
-		tmp = erl_element ((idx), term); \
-		status = eterm_to_string (tmp, (buf), sizeof (buf)); \
-		erl_free_term (tmp); \
-		if (status != 0) \
+	do {
+		if(0 != (status = tuple_elem_to_name_str(term, 2, vl->host))){
+			ERROR("erlang plugin: failed to decode host name.");
 			break;
-
-		TUPLE_ELEM_TO_CHAR_ARRAY (2, vl->host);
-		TUPLE_ELEM_TO_CHAR_ARRAY (3, vl->plugin);
-		TUPLE_ELEM_TO_CHAR_ARRAY (4, vl->plugin_instance);
-		TUPLE_ELEM_TO_CHAR_ARRAY (5, vl->type);
-		TUPLE_ELEM_TO_CHAR_ARRAY (6, vl->type_instance);
+		}
+		if(0 != (status = tuple_elem_to_name_str(term, 3, vl->plugin))){
+			ERROR("erlang plugin: failed to decode plugin name.");
+			break;
+		}
+		if(0 != (status = tuple_elem_to_name_str(term, 4, vl->plugin_instance))){
+			ERROR("erlang plugin: failed to decode plugin instance.");
+			break;
+		}
+		if(0 != (status = tuple_elem_to_name_str(term, 5, vl->type))){
+			ERROR("erlang plugin: failed to decode type name.");
+			break;
+		}
+		if(0 != (status = tuple_elem_to_name_str(term, 6, vl->type_instance))){
+			ERROR("erlang plugin: failed to decode type instance.");
+			break;
+		}
 
 		ds = plugin_get_ds (vl->type);
-		if (ds == NULL)
-		{
+		if(ds == NULL){
+			ERROR("erlang plugin: failed to get data set.");
 			status = -1;
 			break;
 		}
 
+		vl->time = 0;
 		tmp = erl_element (7, term);
-		status = eterm_to_uint64_t(tmp, &vl->time);
+		time_t interval = 0;
+		status = eterm_to_time_t(tmp, &interval);
 		erl_free_term (tmp);
-		if (status != 0)
-			break;
+		if (status != 0) break;
+		if (interval < 1) vl->interval = interval_g;
+		else vl->interval = TIME_T_TO_CDTIME_T(interval);
 
 		tmp = erl_element (8, term);
-		status = eterm_to_uint64_t(tmp, &vl->interval);
-		erl_free_term (tmp);
-		if (status != 0)
-			break;
-		if (vl->interval < 1)
-			vl->interval = interval_g;
-
-		tmp = erl_element (9, term);
 		status = eterm_to_values (tmp, ds, vl);
 		erl_free_term (tmp);
-		if (status != 0)
+		if (status != 0){
+			ERROR("erlang plugin: failed to decode values.");
 			break;
-
-#undef TUPLE_ELEM_TO_CHAR_ARRAY
+		}
 	} while (0);
 
-	if (status != 0)
-		return (status);
+	if (status != 0) return (status);
 
 	/* validate the struct */
-	if ((vl->host[0] == 0) || (vl->plugin[0] == 0) || (vl->type[0] == 0))
+	if ((vl->host[0] == 0) || (vl->plugin[0] == 0) || (vl->type[0] == 0)){
+		ERROR("erlang plugin: bad bad value list structure.");
 		return (-1);
+	}
 
-	if (ds->ds_num != vl->values_len)
+	if (ds->ds_num != vl->values_len){
+		ERROR("erlang plugin: bad number of data sets.");
 		return (-1);
-
+	}
+	/*
+  ERROR("###            host=%s", vl->host);
+  ERROR("###          plugin=%s", vl->plugin);
+  ERROR("### plugin_instance=%s", vl->plugin_instance);
+  ERROR("###            type=%s", vl->type);
+  ERROR("###   type_instance=%s", vl->type_instance);
+  ERROR("###      values_len=%i", vl->values_len);
+  ERROR("###        interval=%llu", vl->interval);
+  ERROR("###       values[0]=%lf", (vl->values[0]).gauge);
+	*/
 	return (0);
 } /* }}} int eterm_to_value_list */
+
+static int test_value_list(value_list_t *vl) /* {{{ */
+{
+	value_t * values = NULL;
+	values = malloc (sizeof (value_t));
+	values[0].gauge= rand() % 100;
+	vl -> values = values;
+	vl -> values_len = 1;
+	sstrncpy(vl->host, hostname_g, DATA_MAX_NAME_LEN);
+	sstrncpy(vl->plugin, "erlang", DATA_MAX_NAME_LEN);
+	sstrncpy(vl->plugin_instance, "p_ins", DATA_MAX_NAME_LEN);
+	sstrncpy(vl->type, "gauge", DATA_MAX_NAME_LEN);
+	sstrncpy(vl->type_instance, "t_ins", DATA_MAX_NAME_LEN);
+	return 0;
+} /* }}} int test_value_list */
 
 static int ce_read (user_data_t *ud) /* {{{ */
 {
@@ -464,7 +477,7 @@ static int ce_read (user_data_t *ud) /* {{{ */
 		return (-1);
 
 	ci = ud->data;
-	
+
 	rpc_args = erl_format ("[~w,[]]", erl_copy_term (ci->fun));
 	if (rpc_args == NULL)
 	{
@@ -497,14 +510,16 @@ static int handle_dispatch_values (ce_connection_info_t *cinfo, /* {{{ */
 		const ErlMessage *req)
 {
 	ETERM *eterm_vl;
-	value_list_t vl;
+	value_list_t vl = VALUE_LIST_INIT;
 	int status;
-
-	memset (&vl, 0, sizeof (vl));
-	vl.values = NULL;
+	int stupid_switch = 0;
 
 	eterm_vl = erl_element (2, req->msg);
-	status = eterm_to_value_list (eterm_vl, &vl);
+	if(stupid_switch < 1) {
+		status = eterm_to_value_list (eterm_vl, &vl);
+	}else{
+		status = test_value_list(&vl);
+	}
 	erl_free_term (eterm_vl);
 
 	if (status != 0)
